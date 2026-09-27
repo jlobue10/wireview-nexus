@@ -16,7 +16,7 @@ $startup = [Environment]::GetFolderPath('Startup')
 $lnk = Join-Path $startup 'WireView Nexus.lnk'
 
 function Stop-Daemon {
-    Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |
+    Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" |   # python.exe, pythonw.exe, pythonw3.12.exe (Store)
         Where-Object { $_.CommandLine -like '*nexus_wireview.py*' } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
