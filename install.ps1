@@ -1,16 +1,17 @@
-# One-command installer for wireview-nexus (WireView Pro II -> iCUE Nexus).
+# Installer for wireview-nexus (WireView Pro II -> iCUE Nexus).
 #
 # From anywhere (downloads the latest main branch into %LOCALAPPDATA%\wireview-nexus):
 #   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1 | iex"
 # With options:
 #   powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Layout per-wire"
 # From a clone (installs in place):
-#   powershell -ExecutionPolicy Bypass -File install.ps1 [-Layout combined] [-ExtraArgs '--fps 4']
+#   powershell -ExecutionPolicy Bypass -File install.ps1 [-Layout combined] [-ExtraArgs '--fps 4'] [-NoStart]
 # Remove:
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
 #
 # What it does: finds Python 3.10+ (installs it with winget if missing), creates a venv,
-# installs hidapi/Pillow/pyserial, registers the daemon to start hidden at login, starts it.
+# installs hidapi/Pillow/pyserial, registers a per-user Scheduled Task that runs the daemon
+# at logon (no admin rights needed), and starts it. Re-running updates and restarts.
 param(
     [ValidateSet('combined', 'per-wire', 'total-current', 'total-power')][string]$Layout = 'combined',
     [string]$ExtraArgs = '',
@@ -23,24 +24,31 @@ $ErrorActionPreference = 'Stop'
 $Repo = 'jlobue10/wireview-nexus'
 $Name = 'wireview-nexus'
 $Main = 'nexus_wireview.py'
-$Shortcut = 'WireView Nexus.lnk'
+$TaskName = 'WireView Nexus'
+$LegacyShortcut = Join-Path ([Environment]::GetFolderPath('Startup')) 'WireView Nexus.lnk'
 
 function Say($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
+
+function Stop-Daemon {
+    Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Stop-ScheduledTask -ErrorAction SilentlyContinue
+    Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" |   # python.exe, pythonw.exe, pythonw3.12.exe (Store)
+        Where-Object { $_.CommandLine -like "*$Main*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
 
 # --- where to install -------------------------------------------------------
 $scriptDir = if ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { '' }
 $inPlace = $scriptDir -and (Test-Path (Join-Path $scriptDir $Main))
 if (-not $Dir) { $Dir = if ($inPlace) { $scriptDir } else { Join-Path $env:LOCALAPPDATA $Name } }
 
-$startup = [Environment]::GetFolderPath('Startup')
-$lnk = Join-Path $startup $Shortcut
-
 if ($Uninstall) {
     Say "Stopping $Name"
-    Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" |   # python.exe, pythonw.exe, pythonw3.12.exe (Store)
-        Where-Object { $_.CommandLine -like "*$Main*" } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    if (Test-Path $lnk) { Remove-Item $lnk; Say "Removed startup entry $lnk" }
+    Stop-Daemon
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        Say "Removed scheduled task '$TaskName'"
+    }
+    if (Test-Path $LegacyShortcut) { Remove-Item $LegacyShortcut }
     if (-not $inPlace -and (Test-Path $Dir)) { Remove-Item -Recurse -Force $Dir; Say "Removed $Dir" }
     Say 'Uninstalled.'
     exit 0
@@ -87,6 +95,7 @@ Say "Using Python: $py"
 
 # --- venv + packages ---------------------------------------------------------
 $venvPy = Join-Path $Dir 'venv\Scripts\python.exe'
+$pythonw = Join-Path $Dir 'venv\Scripts\pythonw.exe'
 if (-not (Test-Path $venvPy)) {
     Say 'Creating virtual environment'
     & cmd /c "$py -m venv `"$Dir\venv`""
@@ -97,19 +106,34 @@ $pipExtra = if ($env:WIREVIEW_PIP_ARGS) { $env:WIREVIEW_PIP_ARGS -split ' ' } el
 & $venvPy -m pip install --disable-pip-version-check -q @pipExtra -r (Join-Path $Dir 'requirements.txt')
 if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
 
-# --- start at login + now ----------------------------------------------------
-$argsList = @('-ExecutionPolicy', 'Bypass', '-File', (Join-Path $Dir 'install-startup.ps1'), '-Layout', $Layout)
-if ($ExtraArgs) { $argsList += @('-ExtraArgs', $ExtraArgs) }
-if ($NoStart) { $argsList += '-NoStart' }
-& powershell @argsList
-if ($LASTEXITCODE -ne 0) { throw 'install-startup.ps1 failed' }
+# --- run at logon (per-user scheduled task) ----------------------------------
+$daemonArgs = '"' + (Join-Path $Dir $Main) + '" --layout ' + $Layout
+if ($ExtraArgs) { $daemonArgs += ' ' + $ExtraArgs }
+
+Say "Registering scheduled task '$TaskName' (runs at logon)"
+Stop-Daemon
+if (Test-Path $LegacyShortcut) { Remove-Item $LegacyShortcut }   # older installs used a Startup shortcut
+$action = New-ScheduledTaskAction -Execute $pythonw -Argument $daemonArgs -WorkingDirectory $Dir
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+$settings.ExecutionTimeLimit = 'PT0S'   # no 3-day cap; it is a daemon
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal `
+    -Settings $settings -Description 'Shows Thermal Grizzly WireView Pro II readings on the iCUE Nexus' -Force | Out-Null
+
+if (-not $NoStart) {
+    Say 'Starting it now'
+    Start-ScheduledTask -TaskName $TaskName
+}
 
 Write-Host ''
 Say 'Done.'
 Write-Host "  Installed in : $Dir"
+Write-Host "  Runs         : $pythonw $daemonArgs"
 Write-Host "  Layout       : $Layout   (change: install.ps1 -Layout per-wire)"
 Write-Host '  Readings     : straight from the WireView over USB. Close the Thermal Grizzly WireView app'
 Write-Host '                 (and disable its auto-start) so the COM port is free. No HWiNFO needed.'
 Write-Host '  iCUE         : give the Nexus an empty screen (no widgets, black background) so iCUE stops'
 Write-Host '                 redrawing over the daemon.'
-Write-Host '  Uninstall    : install.ps1 -Uninstall'
+Write-Host "  Manage       : Task Scheduler > '$TaskName'   |   uninstall: install.ps1 -Uninstall"

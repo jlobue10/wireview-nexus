@@ -25,8 +25,9 @@ powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/jlo
 ```
 
 It downloads this repository to `%LOCALAPPDATA%\wireview-nexus`, installs Python 3.12 with
-winget if no Python 3.10+ is present, creates a venv with the three packages, registers the
-daemon to start hidden at login, and starts it. Then:
+winget if no Python 3.10+ is present, creates a venv with the three packages, registers a
+per-user Scheduled Task named "WireView Nexus" that runs the daemon at logon (no admin rights
+needed), and starts it. Then:
 
 1. **Close the Thermal Grizzly WireView app** and turn off its auto-start. Only one program
    can hold the WireView's USB serial port.
@@ -50,10 +51,10 @@ python -m venv venv
 venv\Scripts\pip install -r requirements.txt
 venv\Scripts\python nexus_wireview.py --layout combined --preview test.png   # no Nexus needed
 venv\Scripts\python nexus_wireview.py --layout combined
-powershell -ExecutionPolicy Bypass -File install-startup.ps1 -Layout combined   # start at login
+powershell -ExecutionPolicy Bypass -File install.ps1 -Layout combined   # venv + run at logon
 ```
 
-`install.ps1` run from the clone does the same steps in place.
+The last line does the same steps in place. `-NoStart` registers without starting.
 </details>
 
 ## Where the readings come from
