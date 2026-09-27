@@ -36,10 +36,10 @@
   <figure><img src="img/nexus_total-power.png" alt="total power layout"><figcaption><code>--layout total-power</code> · total watts against the cable rating</figcaption></figure>
 
   <h2>How it works</h2>
-  <pre>WireView Pro II ──USB──▶ HWiNFO64 (shared memory) ──▶ nexus_wireview.py ──HID frames──▶ iCUE Nexus</pre>
+  <pre>WireView Pro II ──USB serial──▶ nexus_wireview.py ──HID frames──▶ iCUE Nexus</pre>
   <ol>
-    <li>HWiNFO64 8.41+ reads the WireView Pro II natively. Enable Shared Memory Support and close the Thermal Grizzly app.</li>
-    <li><code>pip install -r requirements.txt</code> (hidapi, Pillow), then <code>python nexus_wireview.py --layout combined</code>.</li>
+    <li>Install with one PowerShell command: <code>powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1 | iex"</code>. It fetches the files, sets up Python, and starts the daemon at login.</li>
+    <li>The daemon reads the WireView directly over its USB serial port (no HWiNFO needed). Close the Thermal Grizzly WireView app and disable its auto-start; only one program can hold the port. If a <a href="https://jlobue10.github.io/wireview-xeneon-edge/">wireview-xeneon-edge</a> bridge is running, the daemon reads from it instead.</li>
     <li>Give the Nexus an empty screen in iCUE so iCUE stops redrawing over the daemon's frames.</li>
   </ol>
 
@@ -49,9 +49,11 @@
     <tr><td><code>--layout</code></td><td><code>combined</code></td><td>combined, per-wire, total-current, total-power</td></tr>
     <tr><td><code>--wire-limit</code></td><td><code>10.5</code></td><td>Amps per wire treated as 100 %</td></tr>
     <tr><td><code>--total-limit</code></td><td><code>55</code></td><td>Amps total treated as 100 %</td></tr>
-    <tr><td><code>--cable-w</code></td><td><code>600</code></td><td>Cable rating in W</td></tr>
+    <tr><td><code>--cable-w</code></td><td>cable's own rating</td><td>Cable rating in W</td></tr>
     <tr><td><code>--fps</code></td><td><code>2</code></td><td>Frames per second</td></tr>
     <tr><td><code>--brightness</code></td><td></td><td>Backlight 0–100, set once at start</td></tr>
+    <tr><td><code>--source</code></td><td><code>auto</code></td><td><code>auto</code>, <code>bridge</code>, <code>serial</code>, <code>hwinfo</code></td></tr>
+    <tr><td><code>--serial-port</code></td><td>auto-detect</td><td>COM port of the WireView</td></tr>
     <tr><td><code>--preview PNG</code></td><td></td><td>Render one frame to a file and exit</td></tr>
   </table>
 </main>

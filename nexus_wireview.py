@@ -3,8 +3,9 @@
 The Nexus is a 640x48 USB display. iCUE offers no way to feed it third-party
 sensors, so this daemon talks to the panel directly over HID (the protocol
 reverse-engineered by https://github.com/mantonx/nexus-open) and paints
-frames rendered with Pillow. Readings come from HWiNFO64 shared memory
-(see hwinfo_wireview.py).
+frames rendered with Pillow. Readings come straight from the WireView over
+USB serial (wireview_serial.py); HWiNFO64 shared memory is the fallback
+(see wireview_source.py).
 
 Layouts (``--layout``):
 
@@ -13,7 +14,7 @@ Layouts (``--layout``):
   total-current large total amps with a horizontal bar against the limit
   total-power   large total watts with a horizontal bar against the cable rating
 
-Requires: pip install hidapi pillow
+Requires: pip install hidapi pillow pyserial
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ import hid
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from hwinfo_wireview import read_wireview  # noqa: E402
+from wireview_source import DEFAULT_BRIDGE_URL, SOURCES, read_wireview  # noqa: E402
 
 VID, PID = 0x1B1C, 0x1B8E
 W, H = 640, 48
@@ -132,9 +133,11 @@ _FAULT_TEXT = {
 
 
 class Renderer:
-    def __init__(self, layout: str, wire_limit: float, total_limit: float, cable_w: float) -> None:
+    def __init__(self, layout: str, wire_limit: float, total_limit: float, cable_w: float | None) -> None:
         self.layout = layout
-        self.wire_limit, self.total_limit, self.cable_w = wire_limit, total_limit, cable_w
+        self.wire_limit, self.total_limit = wire_limit, total_limit
+        self.cable_w_auto = cable_w is None  # follow the rating the cable reports
+        self.cable_w = cable_w or 600.0
         self.f_big = _font(30, bold=True)
         self.f_mid = _font(17, bold=True)
         self.f_small = _font(12)
@@ -168,12 +171,12 @@ class Renderer:
         img = Image.new("RGBA", (W, H), SURFACE)
         d = ImageDraw.Draw(img)
         if not data.get("ok"):
-            title = "HWiNFO not running" if not data.get("hwinfo_running") else "WireView not found" if not data.get("device_found") else "No data"
             self._text(d, (8, 4), "WIREVIEW PRO II", self.f_tiny, INK3)
-            self._text(d, (8, 18), title, self.f_mid, INK2)
-            hint = "start HWiNFO64 with Shared Memory on" if not data.get("hwinfo_running") else "close the WireView app, restart HWiNFO"
-            self._text(d, (632, 30), hint, self.f_small, INK3, anchor="ra")
+            self._text(d, (8, 18), data.get("status") or "No data", self.f_mid, INK2)
+            self._text(d, (632, 30), data.get("hint") or "", self.f_small, INK3, anchor="ra")
             return img
+        if self.cable_w_auto and data.get("cable_w"):
+            self.cable_w = float(data["cable_w"])
         getattr(self, "layout_" + self.layout.replace("-", "_"))(d, data)
         return img
 
@@ -261,16 +264,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--layout", choices=["combined", "per-wire", "total-current", "total-power"], default="combined")
     ap.add_argument("--wire-limit", type=float, default=10.5, help="amps per wire = 100 %% (default 10.5)")
     ap.add_argument("--total-limit", type=float, default=55.0, help="amps total = 100 %% (default 55)")
-    ap.add_argument("--cable-w", type=float, default=600.0, help="cable rating in W (default 600)")
+    ap.add_argument("--cable-w", type=float, default=None, help="cable rating in W (default: what the cable reports, else 600)")
     ap.add_argument("--fps", type=float, default=2.0, help="frames per second (default 2)")
     ap.add_argument("--brightness", type=int, default=None, help="0-100, set once at start")
-    ap.add_argument("--preview", metavar="PNG", help="render one frame to PNG and exit (no device needed)")
-    ap.add_argument("--demo", action="store_true", help="with --preview: use sample data instead of HWiNFO")
+    ap.add_argument("--source", choices=SOURCES, default="auto",
+                    help="bridge (a running wireview-xeneon-edge bridge), serial (direct USB), hwinfo, or auto (default: that order)")
+    ap.add_argument("--serial-port", metavar="COMx", default=None, help="WireView COM port (default: auto-detect)")
+    ap.add_argument("--bridge-url", default=DEFAULT_BRIDGE_URL, help=f"bridge JSON URL (default {DEFAULT_BRIDGE_URL})")
+    ap.add_argument("--preview", metavar="PNG", help="render one frame to PNG and exit (no Nexus needed)")
+    ap.add_argument("--demo", action="store_true", help="with --preview: use sample data instead of the device")
     args = ap.parse_args(argv)
+
+    def read() -> dict:
+        return read_wireview(args.source, args.serial_port, args.bridge_url)
 
     r = Renderer(args.layout, args.wire_limit, args.total_limit, args.cable_w)
     if args.preview:
-        data = _demo_data() if args.demo else read_wireview()
+        data = _demo_data() if args.demo else read()
         r.render(data).convert("RGB").save(args.preview)
         print("wrote", args.preview)
         return 0
@@ -278,7 +288,8 @@ def main(argv: list[str] | None = None) -> int:
     nexus = Nexus()
     period = 1.0 / max(0.2, args.fps)
     backoff = 1.0
-    print(f"WireView -> Nexus, layout={args.layout}, {args.fps:g} fps. Ctrl+C to stop.", flush=True)
+    print(f"WireView -> Nexus, layout={args.layout}, {args.fps:g} fps, source={args.source}. Ctrl+C to stop.", flush=True)
+    last_source: str | None = None
     try:
         while True:
             t0 = time.monotonic()
@@ -290,8 +301,15 @@ def main(argv: list[str] | None = None) -> int:
             if backoff != 1.0 and args.brightness is not None:
                 nexus.set_brightness(args.brightness)
             backoff = 1.0
+            data = read()
+            src = data["source"] if data["ok"] else f"none ({data.get('status')}: {data.get('hint')})"
+            if src != last_source:
+                dev = data.get("device") or {}
+                extra = f" on {dev.get('port')} fw v{dev.get('fw')}" if dev else ""
+                print(f"readings: {src}{extra}", flush=True)
+                last_source = src
             try:
-                nexus.send_frame(r.render(read_wireview()))
+                nexus.send_frame(r.render(data))
             except OSError as e:
                 print("write failed, reconnecting:", e, flush=True)
                 nexus.close()
@@ -307,9 +325,9 @@ def main(argv: list[str] | None = None) -> int:
 
 def _demo_data() -> dict:
     return {
-        "ok": True, "hwinfo_running": True, "device_found": True,
+        "ok": True, "source": "demo", "device_found": True,
         "pins": [{"n": n, "voltage": 12.04, "current": c, "power": round(c * 12.04, 1)} for n, c in enumerate((2.2, 2.4, 1.9, 2.1, 2.0, 2.2), 1)],
-        "total_current": 12.8, "total_power": 154.5, "avg_voltage": 12.04, "temp_in": 35.5, "temp_out": 35.8,
+        "total_current": 12.8, "total_power": 154.5, "avg_voltage": 12.04, "temp_in": 35.5, "temp_out": 35.8, "cable_w": 600,
         "faults": {k: False for k in _FAULT_TEXT},
     }
 

@@ -1,8 +1,10 @@
 # Registers the WireView -> Nexus daemon to start (hidden) at login for the current user.
 # Run once from this folder:  powershell -ExecutionPolicy Bypass -File install-startup.ps1 [-Layout combined] [-ExtraArgs "--wire-limit 10.5"]
 # Remove with:                 powershell -ExecutionPolicy Bypass -File install-startup.ps1 -Uninstall
+# (install.ps1 calls this for you.)
 param(
     [switch]$Uninstall,
+    [switch]$NoStart,
     [ValidateSet('combined', 'per-wire', 'total-current', 'total-power')][string]$Layout = 'combined',
     [string]$ExtraArgs = ''
 )
@@ -13,7 +15,14 @@ $script = Join-Path $here 'nexus_wireview.py'
 $startup = [Environment]::GetFolderPath('Startup')
 $lnk = Join-Path $startup 'WireView Nexus.lnk'
 
+function Stop-Daemon {
+    Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |
+        Where-Object { $_.CommandLine -like '*nexus_wireview.py*' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
 if ($Uninstall) {
+    Stop-Daemon
     if (Test-Path $lnk) { Remove-Item $lnk; Write-Host "Removed $lnk" } else { Write-Host 'Not installed.' }
     exit 0
 }
@@ -38,5 +47,7 @@ $s.WindowStyle = 7
 $s.Description = 'Shows WireView Pro II readings on the iCUE Nexus'
 $s.Save()
 Write-Host "Installed: $lnk  ($pythonw $args)"
+if ($NoStart) { exit 0 }
+Stop-Daemon   # replace a running copy so new options take effect
 Write-Host "Starting it now..."
 Start-Process -FilePath $pythonw -ArgumentList $args -WorkingDirectory $here -WindowStyle Hidden

@@ -13,37 +13,75 @@ touch strip.
 iCUE offers no way to put third-party sensors or web content on the Nexus, so this daemon
 paints the panel itself: it renders a 640×48 frame with Pillow and sends it over HID using the
 protocol reverse-engineered by [nexus-open](https://github.com/mantonx/nexus-open). Readings
-come from HWiNFO64 shared memory, which supports the WireView Pro II natively since 8.41.
-No driver changes are needed on Windows.
+come **straight from the WireView over USB serial**; no HWiNFO, no Thermal Grizzly app, no
+driver changes.
 
-## Setup
+## Install
 
-1. Install [HWiNFO64](https://www.hwinfo.com/download/) 8.41 or newer. Start it in
-   **Sensors-only** mode and enable **Settings → Main Settings → Shared Memory Support**.
-   Close the Thermal Grizzly WireView app; it cannot share the USB port with HWiNFO.
-   The free HWiNFO build stops the shared-memory feed after 12 hours per session; HWiNFO Pro
-   removes the cap.
-2. Python 3.10+:
-   ```
-   python -m venv venv
-   venv\Scripts\pip install -r requirements.txt
-   ```
-3. Try a layout without touching the device:
-   ```
-   venv\Scripts\python nexus_wireview.py --layout combined --preview test.png
-   ```
-4. Run it for real:
-   ```
-   venv\Scripts\python nexus_wireview.py --layout combined
-   ```
-   To start at login: `powershell -ExecutionPolicy Bypass -File install-startup.ps1 -Layout combined`.
+One command, in PowerShell:
 
-### iCUE and the Nexus
+```
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1 | iex"
+```
 
-iCUE keeps painting its own screen on the Nexus while it runs, which fights with this daemon
-(visible flicker). Give the Nexus an empty screen in iCUE (no widgets, black background) so
-iCUE has nothing to redraw, or close iCUE. Unplugging and replugging the Nexus restores iCUE's
-boot screen.
+It downloads this repository to `%LOCALAPPDATA%\wireview-nexus`, installs Python 3.12 with
+winget if no Python 3.10+ is present, creates a venv with the three packages, registers the
+daemon to start hidden at login, and starts it. Then:
+
+1. **Close the Thermal Grizzly WireView app** and turn off its auto-start. Only one program
+   can hold the WireView's USB serial port.
+2. In iCUE, give the Nexus an **empty screen** (no widgets, black background) so iCUE stops
+   redrawing over the daemon's frames. Otherwise the two fight and the panel flickers.
+
+Pick a layout or pass options:
+
+```
+powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Layout per-wire -ExtraArgs '--fps 4'"
+```
+
+Re-running the installer updates the files and restarts the daemon. Remove everything with
+`install.ps1 -Uninstall` (from `%LOCALAPPDATA%\wireview-nexus`).
+
+<details>
+<summary>Manual setup from a clone</summary>
+
+```
+python -m venv venv
+venv\Scripts\pip install -r requirements.txt
+venv\Scripts\python nexus_wireview.py --layout combined --preview test.png   # no Nexus needed
+venv\Scripts\python nexus_wireview.py --layout combined
+powershell -ExecutionPolicy Bypass -File install-startup.ps1 -Layout combined   # start at login
+```
+
+`install.ps1` run from the clone does the same steps in place.
+</details>
+
+## Where the readings come from
+
+```
+WireView Pro II ──USB serial (COMx, 115200 8N1)──▶ nexus_wireview.py ──HID frames──▶ iCUE Nexus
+```
+
+`--source` picks the reader (default `auto`, tried in this order):
+
+| Source | What it does |
+|---|---|
+| `bridge` | Asks a running [wireview-xeneon-edge](https://github.com/jlobue10/wireview-xeneon-edge) bridge at `http://localhost:8765/api/wireview`. Use this when both projects run on one PC: the bridge owns the device and the Nexus daemon shares its readings. |
+| `serial` | Opens the WireView's COM port directly (`wireview_serial.py`). Auto-detects the port by USB ID 0483:5740; `--serial-port COM5` overrides. |
+| `hwinfo` | Reads HWiNFO64 shared memory (`hwinfo_wireview.py`, HWiNFO 8.41+ with Shared Memory Support on). Kept as a fallback for setups where HWiNFO must keep the device. |
+
+In `auto` mode the daemon retries a busy or unplugged port every two seconds, and lets go of
+the port as soon as a bridge appears so the bridge can take it. While this daemon (or the
+bridge) holds the port, HWiNFO's own WireView sensor stops updating; it resumes when the
+port is released.
+
+The serial protocol is the one recovered by the Linux community projects
+[wireview-pro-ii](https://github.com/Gustav0ar/wireview-pro-ii) (`docs/protocol.md`) and
+[wireview-hwmon](https://github.com/emaspa/wireview-hwmon); this daemon uses only the
+read-only commands (vendor data, UID, build info, sensor values) plus "resume display
+updates". The 100-byte sensor frame carries per-pin voltage/current/power, totals, average
+voltage, in/out and two external temperatures, fan duty, the cable's power rating and both
+fault masks. Reads take well under a millisecond.
 
 ## Options
 
@@ -52,9 +90,12 @@ boot screen.
 | `--layout` | `combined` | `combined`, `per-wire`, `total-current`, `total-power` |
 | `--wire-limit` | `10.5` | Amps per wire treated as 100 % |
 | `--total-limit` | `55` | Amps total treated as 100 % |
-| `--cable-w` | `600` | Cable rating in W |
-| `--fps` | `2` | Frames per second (HWiNFO updates once a second) |
+| `--cable-w` | cable's own rating | Cable rating in W (the WireView reports 600/450/300/150) |
+| `--fps` | `2` | Frames per second |
 | `--brightness` | | Panel backlight 0–100, set once at start |
+| `--source` | `auto` | `auto`, `bridge`, `serial`, `hwinfo` |
+| `--serial-port` | auto-detect | COM port of the WireView |
+| `--bridge-url` | `http://localhost:8765/api/wireview` | Bridge to ask in `auto`/`bridge` mode |
 | `--preview PNG` | | Render one frame to a file and exit (`--demo` for sample data) |
 
 Bars turn to the warning colour at 80 % of a limit and to critical at 100 %, always with a
@@ -65,8 +106,10 @@ the temperature readout in red.
 
 [wireview-xeneon-edge](https://github.com/jlobue10/wireview-xeneon-edge) shows the same
 readings on a Corsair Xeneon Edge through iCUE's iFrame widget, and its `bridge/` serves the
-readings as JSON on localhost.
+readings as JSON on localhost. `wireview_serial.py`, `wireview_source.py` and
+`hwinfo_wireview.py` are identical in both repositories.
 
 ## License
 
-MIT. Nexus protocol details from nexus-open (MIT).
+MIT. Nexus protocol details from nexus-open (MIT); WireView serial protocol details from
+wireview-pro-ii and wireview-hwmon (MIT).
