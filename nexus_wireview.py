@@ -20,6 +20,7 @@ Requires: pip install hidapi pillow pyserial
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 import time
 from pathlib import Path
@@ -30,6 +31,7 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from wireview_source import DEFAULT_BRIDGE_URL, SOURCES, read_wireview  # noqa: E402
 
+VERSION = "1.0.1"
 VID, PID = 0x1B1C, 0x1B8E
 W, H = 640, 48
 CHUNK, HEADER = 1024, 8
@@ -259,13 +261,23 @@ class Renderer:
         return int(font.getlength(s))
 
 
+def _positive(s: str) -> float:
+    try:
+        v = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {s!r}") from None
+    if not math.isfinite(v) or v <= 0:
+        raise argparse.ArgumentTypeError(f"must be a positive finite number, got {s!r}")
+    return v
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="WireView Pro II on the iCUE Nexus")
     ap.add_argument("--layout", choices=["combined", "per-wire", "total-current", "total-power"], default="combined")
-    ap.add_argument("--wire-limit", type=float, default=10.5, help="amps per wire = 100 %% (default 10.5)")
-    ap.add_argument("--total-limit", type=float, default=55.0, help="amps total = 100 %% (default 55)")
-    ap.add_argument("--cable-w", type=float, default=None, help="cable rating in W (default: what the cable reports, else 600)")
-    ap.add_argument("--fps", type=float, default=2.0, help="frames per second (default 2)")
+    ap.add_argument("--wire-limit", type=_positive, default=10.5, help="amps per wire = 100 %% (default 10.5)")
+    ap.add_argument("--total-limit", type=_positive, default=55.0, help="amps total = 100 %% (default 55)")
+    ap.add_argument("--cable-w", type=_positive, default=None, help="cable rating in W (default: what the cable reports, else 600)")
+    ap.add_argument("--fps", type=_positive, default=2.0, help="frames per second (default 2)")
     ap.add_argument("--brightness", type=int, default=None, help="0-100, set once at start")
     ap.add_argument("--source", choices=SOURCES, default="auto",
                     help="bridge (a running wireview-xeneon-edge bridge), serial (direct USB), hwinfo, or auto (default: that order)")
@@ -273,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--bridge-url", default=DEFAULT_BRIDGE_URL, help=f"bridge JSON URL (default {DEFAULT_BRIDGE_URL})")
     ap.add_argument("--preview", metavar="PNG", help="render one frame to PNG and exit (no Nexus needed)")
     ap.add_argument("--demo", action="store_true", help="with --preview: use sample data instead of the device")
+    ap.add_argument("--version", action="version", version=f"wireview-nexus {VERSION}")
     args = ap.parse_args(argv)
 
     def read() -> dict:
@@ -288,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
     nexus = Nexus()
     period = 1.0 / max(0.2, args.fps)
     backoff = 1.0
-    print(f"WireView -> Nexus, layout={args.layout}, {args.fps:g} fps, source={args.source}. Ctrl+C to stop.", flush=True)
+    print(f"WireView -> Nexus {VERSION}, layout={args.layout}, {args.fps:g} fps, source={args.source}. Ctrl+C to stop.", flush=True)
     last_source: str | None = None
     try:
         while True:

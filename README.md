@@ -43,12 +43,27 @@ powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw
 Re-running the installer updates the files and restarts the daemon. Remove everything with
 `install.ps1 -Uninstall` (from `%LOCALAPPDATA%\wireview-nexus`).
 
-The installer fetches the latest tagged release (or `main` while there is none) and prints the
-archive's SHA-256. To install exactly what you reviewed, pass `-Ref <tag|branch|commit>` and
-optionally `-Sha256 <hash>` (each release's notes list the archive hash):
+The installer fetches the latest tagged release and prints the archive's SHA-256. If the release
+lookup fails it stops rather than silently installing `main` (`-Ref main` selects the development
+branch on purpose).
+
+The one-liner above runs whatever `install.ps1` is on `main` today. To install exactly what you
+reviewed, fetch the bootstrap from the same tag and pass the archive hash from that release's
+notes:
 
 ```
-powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Ref v1.0.0 -Sha256 <hash>"
+powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/v1.0.1/install.ps1))) -Ref v1.0.1 -Sha256 <hash>"
+```
+
+Fully verified, with no remote code before the check: download the release zip, compare its
+hash with the release notes, expand it, and run the installer from the extracted folder (it then
+installs in place):
+
+```
+Invoke-WebRequest https://github.com/jlobue10/wireview-nexus/archive/v1.0.1.zip -OutFile wireview-nexus-v1.0.1.zip
+(Get-FileHash wireview-nexus-v1.0.1.zip).Hash        # must equal the hash in the release notes
+Expand-Archive wireview-nexus-v1.0.1.zip -DestinationPath .
+powershell -ExecutionPolicy Bypass -File wireview-nexus-1.0.1\install.ps1
 ```
 
 <details>
@@ -75,7 +90,7 @@ WireView Pro II ──USB serial (COMx, 115200 8N1)──▶ nexus_wireview.py �
 
 | Source | What it does |
 |---|---|
-| `bridge` | Asks a running [wireview-xeneon-edge](https://github.com/jlobue10/wireview-xeneon-edge) bridge at `http://localhost:8765/api/wireview`. Use this when both projects run on one PC: the bridge owns the device and the Nexus daemon shares its readings. The reply is type-checked before use, and the request never goes through an `HTTP_PROXY`. |
+| `bridge` | Asks a running [wireview-xeneon-edge](https://github.com/jlobue10/wireview-xeneon-edge) bridge at `http://localhost:8765/api/wireview`. Use this when both projects run on one PC: the bridge owns the device and the Nexus daemon shares its readings. The bridge must prove itself: the daemon sends a nonce and checks the HMAC in the reply against the per-user secret in `%LOCALAPPDATA%\wireview\bridge.secret`; anything else listening on the port is ignored. The reply is type-checked, read against a one-second deadline, and never goes through an `HTTP_PROXY`. |
 | `serial` | Opens the WireView's COM port directly (`wireview_serial.py`). Auto-detects the port by USB ID 0483:5740; `--serial-port COM5` overrides. |
 | `hwinfo` | Reads HWiNFO64 shared memory (`hwinfo_wireview.py`, HWiNFO 8.41+ with Shared Memory Support on). Kept as a fallback for setups where HWiNFO must keep the device. |
 
@@ -107,8 +122,8 @@ fault masks. Reads take well under a millisecond.
 | `--bridge-url` | `http://localhost:8765/api/wireview` | Bridge to ask in `auto`/`bridge` mode |
 | `--preview PNG` | | Render one frame to a file and exit (`--demo` for sample data) |
 
-Bars turn to the warning colour at 80 % of a limit and to critical at 100 %, always with a
-text label. Device fault flags (over-current, over-power, over-temperature, imbalance) replace
+Readings older than five seconds show as "Stale readings" instead of numbers. Bars turn to the
+warning colour at 80 % of a limit and to critical at 100 %, always with a text label. Device fault flags (over-current, over-power, over-temperature, imbalance) replace
 the temperature readout in red.
 
 ## Companion project
