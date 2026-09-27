@@ -4,6 +4,8 @@
 #   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1 | iex"
 # With options:
 #   powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Layout per-wire"
+# Pin what gets installed (a tag, branch or commit; -Sha256 also checks the archive):
+#   ... -Ref v1.0.0 -Sha256 <hash printed by a previous run or in the release notes>
 # From a clone (installs in place):
 #   powershell -ExecutionPolicy Bypass -File install.ps1 [-Layout combined] [-ExtraArgs '--fps 4'] [-NoStart]
 # Remove:
@@ -16,6 +18,8 @@ param(
     [ValidateSet('combined', 'per-wire', 'total-current', 'total-power')][string]$Layout = 'combined',
     [string]$ExtraArgs = '',
     [string]$Dir = '',
+    [string]$Ref = '',
+    [string]$Sha256 = '',
     [switch]$Uninstall,
     [switch]$NoStart
 )
@@ -32,7 +36,7 @@ function Say($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 function Stop-Daemon {
     Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Stop-ScheduledTask -ErrorAction SilentlyContinue
     Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" |   # python.exe, pythonw.exe, pythonw3.12.exe (Store)
-        Where-Object { $_.CommandLine -like "*$Main*" } |
+        Where-Object { $_.CommandLine -like "*$(Join-Path $Dir $Main)*" } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 
@@ -49,16 +53,27 @@ if ($Uninstall) {
         Say "Removed scheduled task '$TaskName'"
     }
     if (Test-Path $LegacyShortcut) { Remove-Item $LegacyShortcut }
-    if (-not $inPlace -and (Test-Path $Dir)) { Remove-Item -Recurse -Force $Dir; Say "Removed $Dir" }
+    if (-not $inPlace -and (Test-Path $Dir)) {
+        if (Test-Path (Join-Path $Dir $Main)) { Remove-Item -Recurse -Force $Dir; Say "Removed $Dir" }
+        else { Say "Left $Dir alone: it does not contain $Main" }
+    }
     Say 'Uninstalled.'
     exit 0
 }
 
 # --- get the files ----------------------------------------------------------
 if (-not $inPlace) {
-    Say "Downloading $Repo to $Dir"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    if (-not $Ref) {
+        # Prefer the latest tagged release; fall back to main while there is none.
+        try { $Ref = (Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$Repo/releases/latest").tag_name } catch { $Ref = 'main' }
+    }
+    Say "Downloading $Repo@$Ref to $Dir"
     $zip = Join-Path $env:TEMP "$Name.zip"
-    Invoke-WebRequest -UseBasicParsing "https://github.com/$Repo/archive/refs/heads/main.zip" -OutFile $zip
+    Invoke-WebRequest -UseBasicParsing "https://github.com/$Repo/archive/$Ref.zip" -OutFile $zip
+    $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+    Say "Archive SHA256: $hash"
+    if ($Sha256 -and $hash -ne $Sha256.ToUpper()) { Remove-Item $zip; throw "SHA256 mismatch: expected $Sha256" }
     $tmp = Join-Path $env:TEMP "$Name-extract"
     if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
     Expand-Archive $zip -DestinationPath $tmp
@@ -72,10 +87,15 @@ Set-Location $Dir
 
 # --- python -----------------------------------------------------------------
 function Find-Python {
-    foreach ($cand in @('py -3', 'python', 'python3')) {
+    # Resolve through PATH only; unlike cmd.exe this never picks up a python.exe from the current directory.
+    foreach ($cand in @(@('py', '-3'), @('python'), @('python3'))) {
+        $cmd = Get-Command $cand[0] -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $cmd) { continue }
+        $exe = $cmd.Source
+        $extra = @($cand | Select-Object -Skip 1)
         try {
-            $v = & cmd /c "$cand -c `"import sys;print(sys.version_info[0]*100+sys.version_info[1])`"" 2>$null
-            if ($LASTEXITCODE -eq 0 -and [int]$v -ge 310) { return $cand }
+            $v = & $exe @extra -c 'import sys;print(sys.version_info[0]*100+sys.version_info[1])' 2>$null
+            if ($LASTEXITCODE -eq 0 -and [int]$v -ge 310) { return @{ Exe = $exe; Args = $extra } }
         } catch {}
     }
     return $null
@@ -91,14 +111,14 @@ if (-not $py) {
     $py = Find-Python
     if (-not $py) { throw 'Python was installed but is not on PATH yet. Open a new terminal and run this again.' }
 }
-Say "Using Python: $py"
+Say "Using Python: $($py.Exe) $($py.Args)"
 
 # --- venv + packages ---------------------------------------------------------
 $venvPy = Join-Path $Dir 'venv\Scripts\python.exe'
 $pythonw = Join-Path $Dir 'venv\Scripts\pythonw.exe'
 if (-not (Test-Path $venvPy)) {
     Say 'Creating virtual environment'
-    & cmd /c "$py -m venv `"$Dir\venv`""
+    & $py.Exe @($py.Args) -m venv "$Dir\venv"
     if ($LASTEXITCODE -ne 0) { throw 'venv creation failed' }
 }
 Say 'Installing packages (hidapi, Pillow, pyserial)'

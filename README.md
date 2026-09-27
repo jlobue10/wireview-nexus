@@ -43,6 +43,14 @@ powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw
 Re-running the installer updates the files and restarts the daemon. Remove everything with
 `install.ps1 -Uninstall` (from `%LOCALAPPDATA%\wireview-nexus`).
 
+The installer fetches the latest tagged release (or `main` while there is none) and prints the
+archive's SHA-256. To install exactly what you reviewed, pass `-Ref <tag|branch|commit>` and
+optionally `-Sha256 <hash>`:
+
+```
+powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Ref v1.0.0 -Sha256 <hash>"
+```
+
 <details>
 <summary>Manual setup from a clone</summary>
 
@@ -67,7 +75,7 @@ WireView Pro II ──USB serial (COMx, 115200 8N1)──▶ nexus_wireview.py �
 
 | Source | What it does |
 |---|---|
-| `bridge` | Asks a running [wireview-xeneon-edge](https://github.com/jlobue10/wireview-xeneon-edge) bridge at `http://localhost:8765/api/wireview`. Use this when both projects run on one PC: the bridge owns the device and the Nexus daemon shares its readings. |
+| `bridge` | Asks a running [wireview-xeneon-edge](https://github.com/jlobue10/wireview-xeneon-edge) bridge at `http://localhost:8765/api/wireview`. Use this when both projects run on one PC: the bridge owns the device and the Nexus daemon shares its readings. The reply is type-checked before use, and the request never goes through an `HTTP_PROXY`. |
 | `serial` | Opens the WireView's COM port directly (`wireview_serial.py`). Auto-detects the port by USB ID 0483:5740; `--serial-port COM5` overrides. |
 | `hwinfo` | Reads HWiNFO64 shared memory (`hwinfo_wireview.py`, HWiNFO 8.41+ with Shared Memory Support on). Kept as a fallback for setups where HWiNFO must keep the device. |
 

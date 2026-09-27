@@ -301,7 +301,11 @@ def main(argv: list[str] | None = None) -> int:
             if backoff != 1.0 and args.brightness is not None:
                 nexus.set_brightness(args.brightness)
             backoff = 1.0
-            data = read()
+            try:
+                data = read()
+            except Exception as e:  # a reader bug must not kill the daemon
+                print("read failed:", e, flush=True)
+                data = {"ok": False, "source": args.source, "status": "Reader error", "hint": str(e)[:60]}
             src = data["source"] if data["ok"] else f"none ({data.get('status')}: {data.get('hint')})"
             if src != last_source:
                 dev = data.get("device") or {}
@@ -309,7 +313,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"readings: {src}{extra}", flush=True)
                 last_source = src
             try:
-                nexus.send_frame(r.render(data))
+                frame = r.render(data)
+            except Exception as e:  # bad data must not kill the daemon either
+                print("render failed:", e, flush=True)
+                frame = r.render({"ok": False, "status": "Render error", "hint": str(e)[:60]})
+            try:
+                nexus.send_frame(frame)
             except OSError as e:
                 print("write failed, reconnecting:", e, flush=True)
                 nexus.close()
