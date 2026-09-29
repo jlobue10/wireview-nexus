@@ -1,0 +1,27 @@
+[package]
+name = "wireview-nexus"
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/jlobue10/wireview-nexus"
+description = "Thermal Grizzly WireView Pro II readings on a Corsair iCUE Nexus"
+
+[dependencies]
+ab_glyph = "0.2.32"
+clap = { version = "4.6.7", features = ["derive"] }
+png = "0.18.1"
+# The shared reader lives in the companion repository; clone both side by side.
+wireview-core = { path = "../wireview-xeneon-edge/crates/wireview-core" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
+[target."cfg(windows)".dependencies]
+hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
+
+[target."cfg(not(windows))".dependencies]
+hidapi = { version = "2.6.7", default-features = false, features = ["linux-native-basic-udev"] }

@@ -11,10 +11,14 @@ touch strip.
 ![total power](docs/img/nexus_total-power.png)
 
 iCUE offers no way to put third-party sensors or web content on the Nexus, so this daemon
-paints the panel itself: it renders a 640×48 frame with Pillow and sends it over HID using the
-protocol reverse-engineered by [nexus-open](https://github.com/mantonx/nexus-open). Readings
-come **straight from the WireView over USB serial**; no HWiNFO, no Thermal Grizzly app, no
-driver changes.
+paints the panel itself: it renders a 640×48 frame and sends it over HID using the protocol
+reverse-engineered by [nexus-open](https://github.com/mantonx/nexus-open). Readings come
+**straight from the WireView over USB serial**; no HWiNFO, no Thermal Grizzly app, no driver
+changes.
+
+The daemon is a single executable, `wireview-nexus.exe`, written in Rust; it needs no runtime.
+Text is drawn with the fonts already on the PC (Segoe UI). (Releases up to 1.0.1 were Python;
+the options are unchanged.)
 
 ## Install
 
@@ -24,10 +28,10 @@ One command, in PowerShell:
 powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1 | iex"
 ```
 
-It downloads this repository to `%LOCALAPPDATA%\wireview-nexus`, installs Python 3.12 with
-winget if no Python 3.10+ is present, creates a venv with the three packages, registers a
-per-user Scheduled Task named "WireView Nexus" that runs the daemon at logon (no admin rights
-needed), and starts it. Then:
+It downloads `wireview-nexus.exe` from the latest release to `%LOCALAPPDATA%\wireview-nexus`,
+checks its SHA-256, registers a per-user Scheduled Task named "WireView Nexus" that runs the
+daemon at logon (no admin rights needed), and starts it. A Python-based 1.x install in that
+folder is replaced. Then:
 
 1. **Close the Thermal Grizzly WireView app** and turn off its auto-start. Only one program
    can hold the WireView's USB serial port.
@@ -40,50 +44,55 @@ Pick a layout or pass options:
 powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Layout per-wire -ExtraArgs '--fps 4'"
 ```
 
-Re-running the installer updates the files and restarts the daemon. Remove everything with
-`install.ps1 -Uninstall` (from `%LOCALAPPDATA%\wireview-nexus`).
+Re-running the installer updates the executable and restarts the daemon. Remove everything with
+`install.ps1 -Uninstall`.
 
-The installer fetches the latest tagged release and prints the archive's SHA-256. If the release
-lookup fails it stops rather than silently installing `main` (`-Ref main` selects the development
-branch on purpose).
+The installer fetches the latest tagged release, prints the executable's SHA-256 and compares it
+with the release's `SHA256SUMS`. If the release lookup fails it stops rather than installing
+something else. That comparison only catches a damaged download, because the list comes from the
+same place as the file.
 
 The one-liner above runs whatever `install.ps1` is on `main` today. To install exactly what you
-reviewed, fetch the bootstrap from the same tag and pass the archive hash from that release's
-notes:
+reviewed, fetch the bootstrap from the same tag and pass the hash from that release's notes:
 
 ```
-powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/v1.0.1/install.ps1))) -Ref v1.0.1 -Sha256 <hash>"
+powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/v2.0.0/install.ps1))) -Ref v2.0.0 -Sha256 <hash>"
 ```
 
-Fully verified, with no remote code before the check: download the release zip, compare its
-hash with the release notes, expand it, and run the installer from the extracted folder (it then
-installs in place):
+Fully verified, with no remote code before the check: download `wireview-nexus.exe` and
+`install.ps1` from the release page into one folder, compare the hash with the release notes,
+and run the installer there (it then installs in place):
 
 ```
-Invoke-WebRequest https://github.com/jlobue10/wireview-nexus/archive/v1.0.1.zip -OutFile wireview-nexus-v1.0.1.zip
-(Get-FileHash wireview-nexus-v1.0.1.zip).Hash        # must equal the hash in the release notes
-Expand-Archive wireview-nexus-v1.0.1.zip -DestinationPath .
-powershell -ExecutionPolicy Bypass -File wireview-nexus-1.0.1\install.ps1
+(Get-FileHash wireview-nexus.exe).Hash        # must equal the hash in the release notes
+gh attestation verify wireview-nexus.exe --repo jlobue10/wireview-nexus   # optional: built by this repository's workflow
+powershell -ExecutionPolicy Bypass -File install.ps1 -Layout combined
 ```
+
+`-NoStart` registers without starting.
 
 <details>
-<summary>Manual setup from a clone</summary>
+<summary>Build from source</summary>
+
+With [Rust](https://rustup.rs) installed. The shared reader is the `wireview-core` crate of the
+companion repository, so clone both side by side:
 
 ```
-python -m venv venv
-venv\Scripts\pip install -r requirements.txt
-venv\Scripts\python nexus_wireview.py --layout combined --preview test.png   # no Nexus needed
-venv\Scripts\python nexus_wireview.py --layout combined
-powershell -ExecutionPolicy Bypass -File install.ps1 -Layout combined   # venv + run at logon
+git clone https://github.com/jlobue10/wireview-xeneon-edge
+git clone https://github.com/jlobue10/wireview-nexus
+cd wireview-nexus
+cargo run --release -- --layout combined --preview test.png --demo   # no Nexus needed
+cargo build --release
+target\release\wireview-nexus.exe --layout combined
 ```
 
-The last line does the same steps in place. `-NoStart` registers without starting.
+Copy `install.ps1` next to the executable and run it to register the task in place.
 </details>
 
 ## Where the readings come from
 
 ```
-WireView Pro II ──USB serial (COMx, 115200 8N1)──▶ nexus_wireview.py ──HID frames──▶ iCUE Nexus
+WireView Pro II ──USB serial (COMx, 115200 8N1)──▶ wireview-nexus.exe ──HID frames──▶ iCUE Nexus
 ```
 
 `--source` picks the reader (default `auto`, tried in this order):
@@ -91,8 +100,8 @@ WireView Pro II ──USB serial (COMx, 115200 8N1)──▶ nexus_wireview.py �
 | Source | What it does |
 |---|---|
 | `bridge` | Asks a running [wireview-xeneon-edge](https://github.com/jlobue10/wireview-xeneon-edge) bridge at `http://localhost:8765/api/wireview`. Use this when both projects run on one PC: the bridge owns the device and the Nexus daemon shares its readings. The bridge must prove itself: the daemon sends a nonce and checks the HMAC in the reply against the per-user secret in `%LOCALAPPDATA%\wireview\bridge.secret`; anything else listening on the port is ignored. The reply is type-checked, read against a one-second deadline, and never goes through an `HTTP_PROXY`. |
-| `serial` | Opens the WireView's COM port directly (`wireview_serial.py`). Auto-detects the port by USB ID 0483:5740; `--serial-port COM5` overrides. |
-| `hwinfo` | Reads HWiNFO64 shared memory (`hwinfo_wireview.py`, HWiNFO 8.41+ with Shared Memory Support on). Kept as a fallback for setups where HWiNFO must keep the device. |
+| `serial` | Opens the WireView's COM port directly. Auto-detects the port by USB ID 0483:5740; `--serial-port COM5` overrides. |
+| `hwinfo` | Reads HWiNFO64 shared memory (HWiNFO 8.41+ with Shared Memory Support on). Kept as a fallback for setups where HWiNFO must keep the device. |
 
 In `auto` mode the daemon retries a busy or unplugged port every two seconds, and lets go of
 the port as soon as a bridge appears so the bridge can take it. While this daemon (or the
@@ -116,7 +125,7 @@ fault masks. Reads take well under a millisecond.
 | `--total-limit` | `55` | Amps total treated as 100 % |
 | `--cable-w` | cable's own rating | Cable rating in W (the WireView reports 600/450/300/150) |
 | `--fps` | `2` | Frames per second |
-| `--brightness` | | Panel backlight 0–100, set once at start |
+| `--brightness` | | Panel backlight 0–100, set each time the panel is opened |
 | `--source` | `auto` | `auto`, `bridge`, `serial`, `hwinfo` |
 | `--serial-port` | auto-detect | COM port of the WireView |
 | `--bridge-url` | `http://localhost:8765/api/wireview` | Bridge to ask in `auto`/`bridge` mode |
@@ -130,10 +139,15 @@ the temperature readout in red.
 
 [wireview-xeneon-edge](https://github.com/jlobue10/wireview-xeneon-edge) shows the same
 readings on a Corsair Xeneon Edge through iCUE's iFrame widget, and its `bridge/` serves the
-readings as JSON on localhost. `wireview_serial.py`, `wireview_source.py` and
-`hwinfo_wireview.py` are identical in both repositories.
+readings as JSON on localhost. Its `wireview-core` crate is the reader both programs use.
+
+## Tests
+
+`cargo test` checks the frame packets, the layouts and the command line; no Nexus and no
+WireView needed (a system font is).
 
 ## License
 
 MIT. Nexus protocol details from nexus-open (MIT); WireView serial protocol details from
-wireview-pro-ii and wireview-hwmon (MIT).
+wireview-pro-ii and wireview-hwmon (MIT). The executable includes the Rust crates listed in
+`Cargo.lock` under their own licenses (MIT, Apache-2.0, and MPL-2.0 for `serialport`).

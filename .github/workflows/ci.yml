@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main, rust-port]
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: wireview-nexus
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: wireview-nexus
+      # wireview-core lives in the companion repository, expected next to this one.
+      # Same branch or tag there if it exists, else its main branch.
+      - name: Companion repository
+        shell: bash
+        working-directory: .
+        env:
+          REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          git clone --depth 1 --branch "$REF" https://github.com/jlobue10/wireview-xeneon-edge ||
+            git clone --depth 1 https://github.com/jlobue10/wireview-xeneon-edge
+      - name: Fonts for the render tests
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
