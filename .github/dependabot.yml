@@ -1,13 +1,7 @@
 version: 2
 updates:
-  - package-ecosystem: pip
-    directory: /
-    schedule:
-      interval: weekly
-  - package-ecosystem: cargo
-    directory: /
-    schedule:
-      interval: weekly
+  # No cargo entry: wireview-core is a path dependency in the sibling
+  # wireview-xeneon-edge checkout, which Dependabot cannot fetch.
   - package-ecosystem: github-actions
     directory: /
     schedule:
