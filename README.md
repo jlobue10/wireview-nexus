@@ -44,8 +44,9 @@ Pick a layout or pass options:
 powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Layout per-wire -ExtraArgs '--fps 4'"
 ```
 
-Re-running the installer updates the executable and restarts the daemon. Remove everything with
-`install.ps1 -Uninstall`.
+Re-running the installer updates the executable and restarts the daemon. It leaves a copy of
+itself next to the executable, so `%LOCALAPPDATA%\wireview-nexus\install.ps1 -Uninstall` removes
+everything.
 
 The executable is not code-signed, so SmartScreen or an antivirus may flag it as unknown on
 first run; some products (Norton, for one) quarantine it outright. Check the SHA-256 and the
