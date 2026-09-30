@@ -6,7 +6,7 @@
 #   powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Layout per-wire"
 # Pin what gets installed. Fetch the bootstrap from the SAME tag, otherwise main's installer
 # runs before anything is verified:
-#   powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/v2.0.0/install.ps1))) -Ref v2.0.0 -Sha256 <hash from the release notes>"
+#   powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/v2.1.0/install.ps1))) -Ref v2.1.0 -Sha256 <hash from the release notes>"
 # Fully verified: download wireview-nexus.exe and install.ps1 from the release, compare the
 # executable's SHA-256 with the release notes, and run install.ps1 from that folder (installs the
 # executable next to it; -Ref/-Sha256 unused).
