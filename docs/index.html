@@ -26,7 +26,7 @@
 <body>
 <main>
   <h1>WireView Pro II on the Corsair iCUE Nexus</h1>
-  <p>Live per-wire current, total current and total power from a Thermal Grizzly WireView Pro II on the 640×48 iCUE Nexus. iCUE cannot show third-party sensors or web pages on the Nexus, so a small Python daemon paints the panel directly over USB.</p>
+  <p>Live per-wire current, total current and total power from a Thermal Grizzly WireView Pro II on the 640×48 iCUE Nexus. iCUE cannot show third-party sensors or web pages on the Nexus, so a small daemon (one Rust executable) paints the panel directly over USB.</p>
   <p>Source and setup: <a href="https://github.com/jlobue10/wireview-nexus">github.com/jlobue10/wireview-nexus</a></p>
 
   <h2>Layouts</h2>
@@ -36,9 +36,9 @@
   <figure><img src="img/nexus_total-power.png" alt="total power layout"><figcaption><code>--layout total-power</code> · total watts against the cable rating</figcaption></figure>
 
   <h2>How it works</h2>
-  <pre>WireView Pro II ──USB serial──▶ nexus_wireview.py ──HID frames──▶ iCUE Nexus</pre>
+  <pre>WireView Pro II ──USB serial──▶ wireview-nexus.exe ──HID frames──▶ iCUE Nexus</pre>
   <ol>
-    <li>Install with one PowerShell command: <code>powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1 | iex"</code>. It fetches the files, sets up Python, and starts the daemon at login.</li>
+    <li>Install with one PowerShell command: <code>powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1 | iex"</code>. It downloads <code>wireview-nexus.exe</code> from the latest release, checks its SHA-256, and starts the daemon at logon.</li>
     <li>The daemon reads the WireView directly over its USB serial port (no HWiNFO needed). Close the Thermal Grizzly WireView app and disable its auto-start; only one program can hold the port. If a <a href="https://jlobue10.github.io/wireview-xeneon-edge/">wireview-xeneon-edge</a> bridge is running, the daemon reads from it instead.</li>
     <li>Give the Nexus an empty screen in iCUE so iCUE stops redrawing over the daemon's frames.</li>
   </ol>

@@ -47,6 +47,11 @@ powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw
 Re-running the installer updates the executable and restarts the daemon. Remove everything with
 `install.ps1 -Uninstall`.
 
+The executable is not code-signed, so SmartScreen or an antivirus may flag it as unknown on
+first run; some products (Norton, for one) quarantine it outright. Check the SHA-256 and the
+attestation below, then allow it or add `%LOCALAPPDATA%\wireview-nexus` to the exclusions.
+Tested on Windows 11 with a WireView Pro II on firmware v5, an iCUE Nexus and iCUE 5.
+
 The installer fetches the latest tagged release, prints the executable's SHA-256 and compares it
 with the release's `SHA256SUMS`. If the release lookup fails it stops rather than installing
 something else. That comparison only catches a damaged download, because the list comes from the
@@ -138,7 +143,7 @@ the temperature readout in red.
 ## Companion project
 
 [wireview-xeneon-edge](https://github.com/jlobue10/wireview-xeneon-edge) shows the same
-readings on a Corsair Xeneon Edge through iCUE's iFrame widget, and its `bridge/` serves the
+readings on a Corsair Xeneon Edge through iCUE's iFrame widget, and its bridge serves the
 readings as JSON on localhost. Its `wireview-core` crate is the reader both programs use.
 
 ## Tests
