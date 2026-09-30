@@ -226,10 +226,8 @@ impl Renderer {
         let (big, mid, small, tiny) = (pen.big, pen.mid, pen.small, pen.tiny);
         // Six per-wire bars, 0..262 px
         let mut x = 6;
-        let mut worst = Level::Ok;
         for pin in &data.pins {
             let lv = level(pin.current, self.wire_limit);
-            worst = worst.max(lv);
             pen.vbar(x, 3, x + 14, 33, ratio(pin.current, self.wire_limit) * 0.8, lv.color());
             pen.text(x + 18, 2, &number(pin.current, 1), small, INK);
             pen.text(x + 18, 20, &format!("P{}", pin.n), tiny, INK3);
@@ -237,12 +235,20 @@ impl Renderer {
         }
         pen.text(6, 36, "PER-WIRE A", tiny, INK3);
         // Totals
+        let amps_level = level(data.total_current, self.total_limit);
+        let watts_level = level(data.total_power, self.cable_w);
         let amps = number(data.total_current, 2);
-        pen.text(300, 0, &amps, big, INK);
+        pen.text(300, 0, &amps, big, if amps_level == Level::Ok { INK } else { amps_level.color() });
         pen.text(300 + big.width(&amps) + 4, 12, "A", mid, INK2);
         pen.text(300, 36, "TOTAL CURRENT", tiny, INK3);
         let watts = number(data.total_power, 0);
-        pen.text(450, 0, &watts, big, INK);
+        pen.text(
+            450,
+            0,
+            &watts,
+            big,
+            if watts_level == Level::Ok { INK } else { watts_level.color() },
+        );
         pen.text(450 + big.width(&watts) + 4, 12, "W", mid, INK2);
         pen.text(450, 36, "TOTAL POWER", tiny, INK3);
         // Temperature / status column
@@ -250,14 +256,33 @@ impl Renderer {
             Some(fault) => pen.text_right(634, 4, &fault, small, CRIT),
             None => pen.text_right(634, 4, &format!("{}°C", number(data.temp_out.or(data.temp_in), 1)), small, INK2),
         }
-        let (status, color) = match worst {
-            Level::Ok => ("OK", INK3),
-            Level::Warn => ("WIRE NEAR LIMIT", WARN),
-            Level::Crit => ("WIRE OVER LIMIT", CRIT),
-        };
-        pen.text_right(634, 22, status, tiny, color);
+        let (status, severity) = self.combined_status(data);
+        pen.text_right(634, 22, status, tiny, if severity == Level::Ok { INK3 } else { severity.color() });
         if let Some(v) = data.avg_voltage {
             pen.text_right(634, 35, &format!("{v:.2} V"), tiny, INK3);
+        }
+    }
+
+    fn combined_status(&self, data: &Readings) -> (&'static str, Level) {
+        if data.faults.active().next().is_some() {
+            return ("DEVICE FAULT", Level::Crit);
+        }
+        let wire = data
+            .pins
+            .iter()
+            .map(|p| level(p.current, self.wire_limit))
+            .max()
+            .unwrap_or(Level::Ok);
+        let alarms = [
+            (wire, "WIRE NEAR LIMIT", "WIRE OVER LIMIT"),
+            (level(data.total_current, self.total_limit), "AMPS NEAR LIMIT", "AMPS OVER LIMIT"),
+            (level(data.total_power, self.cable_w), "POWER NEAR LIMIT", "POWER OVER LIMIT"),
+        ];
+        let (severity, warning, critical) = alarms.into_iter().max_by_key(|(severity, _, _)| *severity).unwrap();
+        match severity {
+            Level::Ok => ("OK", severity),
+            Level::Warn => (warning, severity),
+            Level::Crit => (critical, severity),
         }
     }
 
@@ -475,5 +500,43 @@ mod tests {
         assert!(count(&r.render(&data), 190..W, CRIT) > 50);
         let mut fixed = Renderer::new(Layout::TotalPower, 10.5, 55.0, Some(600.0), Fonts::load().unwrap());
         assert_eq!(count(&fixed.render(&data), 190..W, CRIT), 0);
+    }
+
+    #[test]
+    fn combined_totals_warn_at_eighty_percent_and_alarm_at_the_limit() {
+        let mut r = Renderer::new(Layout::Combined, 10.5, 20.0, Some(200.0), Fonts::load().unwrap());
+        for (value, severity, amps_label, power_label) in [
+            (0.799, Level::Ok, "OK", "OK"),
+            (0.8, Level::Warn, "AMPS NEAR LIMIT", "POWER NEAR LIMIT"),
+            (1.0, Level::Crit, "AMPS OVER LIMIT", "POWER OVER LIMIT"),
+        ] {
+            let mut data = demo_data();
+            data.total_current = Some(20.0 * value);
+            assert_eq!(r.combined_status(&data), (amps_label, severity));
+            let frame = r.render(&data);
+            if severity != Level::Ok {
+                assert!(count(&frame, 300..440, severity.color()) > 20, "total amps not coloured");
+            }
+            data.total_current = Some(12.8);
+            data.total_power = Some(200.0 * value);
+            assert_eq!(r.combined_status(&data), (power_label, severity));
+            let frame = r.render(&data);
+            if severity != Level::Ok {
+                assert!(count(&frame, 450..540, severity.color()) > 20, "total watts not coloured");
+            }
+        }
+    }
+
+    #[test]
+    fn combined_uses_cable_rating_and_never_labels_a_firmware_fault_ok() {
+        let mut r = renderer(Layout::Combined, 10.5);
+        let mut data = demo_data();
+        data.cable_w = Some(150);
+        assert!(count(&r.render(&data), 450..W, CRIT) > 20);
+        assert_eq!(r.combined_status(&data), ("POWER OVER LIMIT", Level::Crit));
+        data.total_power = Some(100.0);
+        data.faults = wireview_core::Faults::from_mask(1);
+        assert_eq!(r.combined_status(&data), ("DEVICE FAULT", Level::Crit));
+        assert!(reddish(&r.render(&data), 540..W) > 20);
     }
 }

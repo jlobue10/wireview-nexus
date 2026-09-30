@@ -8,9 +8,10 @@ repository = "https://github.com/jlobue10/wireview-nexus"
 description = "Thermal Grizzly WireView Pro II readings on a Corsair iCUE Nexus"
 
 [dependencies]
-ab_glyph = "0.2.32"
+ab_glyph_rasterizer = "0.1.10"
 clap = { version = "4.6.7", features = ["derive"] }
 png = "0.18.1"
+skrifa = { version = "0.47.0", default-features = false, features = ["std"] }
 # The shared reader lives in the companion repository; clone both side by side.
 wireview-core = { path = "../wireview-xeneon-edge/crates/wireview-core" }
 
@@ -21,7 +22,9 @@ codegen-units = 1
 strip = true
 
 [target."cfg(windows)".dependencies]
-hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
+# Use the bundled C backend: 2.6.7's windows-native backend returns zero
+# bytes for a successful synchronous WriteFile, falsely triggering short writes.
+hidapi = { version = "2.6.7", default-features = false }
 
 [target."cfg(not(windows))".dependencies]
 hidapi = { version = "2.6.7", default-features = false, features = ["linux-native-basic-udev"] }
