@@ -46,7 +46,10 @@ powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw
 
 Re-running the installer updates the executable and restarts the daemon. It leaves a copy of
 itself next to the executable, so `%LOCALAPPDATA%\wireview-nexus\install.ps1 -Uninstall` removes
-everything.
+the executable and installer while preserving any files you added.
+
+For an older custom install without an ownership marker, pass `-Uninstall -Dir <install folder>`.
+In-place source or manually downloaded folders keep their files when no `-Dir` is given.
 
 The executable is not code-signed, so SmartScreen or an antivirus may flag it as unknown on
 first run; some products (Norton, for one) quarantine it outright. Check the SHA-256 and the
@@ -150,7 +153,12 @@ readings as JSON on localhost. Its `wireview-core` crate is the reader both prog
 ## Tests
 
 `cargo test` checks the frame packets, the layouts and the command line; no Nexus and no
-WireView needed (a system font is).
+WireView needed (a system font is). After `cargo test`,
+`pwsh -NoProfile -File tests/installer.test.ps1` checks installation and uninstallation in
+temporary directories with Windows administration and downloads mocked.
+
+Audit findings, the Windows HID backend change and the remaining hardware checks are recorded
+in [AUDIT-2026-09-30.md](AUDIT-2026-09-30.md).
 
 ## License
 
