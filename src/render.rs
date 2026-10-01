@@ -115,6 +115,25 @@ fn faults(data: &Readings) -> Option<String> {
     (!names.is_empty()).then(|| names.join(" · "))
 }
 
+// Short names keep every simultaneous device fault inside one dedicated
+// footer row, without covering the readings or another fault.
+fn fault_summary(data: &Readings) -> Option<String> {
+    let names: Vec<_> = data
+        .faults
+        .active()
+        .map(|key| match key {
+            "temp_chip" => "CHIP TEMP",
+            "temp_sensor" => "SENSOR TEMP",
+            "over_current_total" => "TOTAL AMPS",
+            "over_current_wire" => "WIRE AMPS",
+            "over_power" => "POWER",
+            "imbalance" => "IMBALANCE",
+            _ => unreachable!("Faults only contains known keys"),
+        })
+        .collect();
+    (!names.is_empty()).then(|| format!("FAULT: {}", names.join(" · ")))
+}
+
 /// `value` with `decimals` places, or `--` when there is none.
 fn number(value: Option<f64>, decimals: usize) -> String {
     value.map_or("--".to_string(), |v| format!("{v:.decimals$}"))
@@ -219,11 +238,16 @@ impl Renderer {
             Layout::TotalCurrent => self.total_current(&mut pen, data),
             Layout::TotalPower => self.total_power(&mut pen, data),
         }
+        if let Some(summary) = fault_summary(data) {
+            let tiny = pen.tiny;
+            pen.text(6, 36, &summary, tiny, CRIT);
+        }
         pen.canvas
     }
 
     fn combined(&self, pen: &mut Pen<'_>, data: &Readings) {
         let (big, mid, small, tiny) = (pen.big, pen.mid, pen.small, pen.tiny);
+        let has_fault = data.faults.active().next().is_some();
         // Six per-wire bars, 0..262 px
         let mut x = 6;
         for pin in &data.pins {
@@ -233,14 +257,18 @@ impl Renderer {
             pen.text(x + 18, 20, &format!("P{}", pin.n), tiny, INK3);
             x += 44;
         }
-        pen.text(6, 36, "PER-WIRE A", tiny, INK3);
+        if !has_fault {
+            pen.text(6, 36, "PER-WIRE A", tiny, INK3);
+        }
         // Totals
         let amps_level = level(data.total_current, self.total_limit);
         let watts_level = level(data.total_power, self.cable_w);
         let amps = number(data.total_current, 2);
         pen.text(300, 0, &amps, big, if amps_level == Level::Ok { INK } else { amps_level.color() });
         pen.text(300 + big.width(&amps) + 4, 12, "A", mid, INK2);
-        pen.text(300, 36, "TOTAL CURRENT", tiny, INK3);
+        if !has_fault {
+            pen.text(300, 36, "TOTAL CURRENT", tiny, INK3);
+        }
         let watts = number(data.total_power, 0);
         pen.text(
             450,
@@ -250,16 +278,17 @@ impl Renderer {
             if watts_level == Level::Ok { INK } else { watts_level.color() },
         );
         pen.text(450 + big.width(&watts) + 4, 12, "W", mid, INK2);
-        pen.text(450, 36, "TOTAL POWER", tiny, INK3);
-        // Temperature / status column
-        match faults(data) {
-            Some(fault) => pen.text_right(634, 4, &fault, small, CRIT),
-            None => pen.text_right(634, 4, &format!("{}°C", number(data.temp_out.or(data.temp_in), 1)), small, INK2),
+        if !has_fault {
+            pen.text(450, 36, "TOTAL POWER", tiny, INK3);
         }
+        // Temperature / status column
+        pen.text_right(634, 4, &format!("{}°C", number(data.temp_out.or(data.temp_in), 1)), small, INK2);
         let (status, severity) = self.combined_status(data);
         pen.text_right(634, 22, status, tiny, if severity == Level::Ok { INK3 } else { severity.color() });
-        if let Some(v) = data.avg_voltage {
-            pen.text_right(634, 35, &format!("{v:.2} V"), tiny, INK3);
+        if !has_fault {
+            if let Some(v) = data.avg_voltage {
+                pen.text_right(634, 35, &format!("{v:.2} V"), tiny, INK3);
+            }
         }
     }
 
@@ -288,6 +317,7 @@ impl Renderer {
 
     fn per_wire(&self, pen: &mut Pen<'_>, data: &Readings) {
         let (mid, tiny) = (pen.mid, pen.tiny);
+        let has_fault = data.faults.active().next().is_some();
         let mut x = 6;
         for pin in &data.pins {
             let lv = level(pin.current, self.wire_limit);
@@ -296,14 +326,15 @@ impl Renderer {
             pen.text(x + 18, -3, &amps, mid, INK);
             pen.text(x + 18 + mid.width(&amps) + 2, 2, "A", tiny, INK2);
             pen.hbar(x, 22, x + 92, 32, ratio(pin.current, self.wire_limit) * 0.8, lv.color());
-            if let Some(p) = pin.power {
-                pen.text(x, 34, &format!("{p:.0} W"), tiny, INK3);
+            if !has_fault {
+                if let Some(p) = pin.power {
+                    pen.text(x, 34, &format!("{p:.0} W"), tiny, INK3);
+                }
             }
             x += 104;
         }
-        match faults(data) {
-            Some(fault) => pen.text_right(634, 36, &fault, tiny, CRIT),
-            None => pen.text_right(634, 36, &format!("limit {} A/wire", self.wire_limit), tiny, INK3),
+        if !has_fault {
+            pen.text_right(634, 36, &format!("max {} A", self.wire_limit), tiny, INK3);
         }
     }
 
@@ -312,15 +343,18 @@ impl Renderer {
         let (big, mid, tiny) = (pen.big, pen.mid, pen.tiny);
         pen.text(8, -2, value, big, INK);
         pen.text(8 + big.width(value) + 6, 10, unit, mid, INK2);
-        pen.text(8, 36, caption, tiny, INK3);
+        if fault.is_none() {
+            pen.text(8, 36, caption, tiny, INK3);
+        }
         pen.hbar(200, 8, 632, 22, ratio, lv.color());
-        pen.text(200, 26, sub, tiny, INK2);
+        // Descenders must finish above the reserved fault footer at y=36.
+        pen.text(200, 23, sub, tiny, INK2);
         let color = match (&fault, lv) {
             (Some(_), _) | (None, Level::Crit) => CRIT,
             (None, Level::Warn) => WARN,
             (None, Level::Ok) => INK3,
         };
-        let right = fault.unwrap_or_else(|| {
+        let right = fault.map(|_| "DEVICE FAULT".to_string()).unwrap_or_else(|| {
             match lv {
                 Level::Ok => "WITHIN LIMIT",
                 Level::Warn => "NEAR LIMIT",
@@ -328,7 +362,7 @@ impl Renderer {
             }
             .to_string()
         });
-        pen.text_right(632, 26, &right, tiny, color);
+        pen.text_right(632, 23, &right, tiny, color);
     }
 
     fn total_current(&self, pen: &mut Pen<'_>, data: &Readings) {
@@ -538,5 +572,53 @@ mod tests {
         data.faults = wireview_core::Faults::from_mask(1);
         assert_eq!(r.combined_status(&data), ("DEVICE FAULT", Level::Crit));
         assert!(reddish(&r.render(&data), 540..W) > 20);
+    }
+
+    #[test]
+    fn every_fault_combination_preserves_the_numeric_readings() {
+        for layout in [Layout::Combined, Layout::PerWire, Layout::TotalCurrent, Layout::TotalPower] {
+            let mut r = renderer(layout, 10.5);
+            let mut data = demo_data();
+            let normal = r.render(&data);
+            let right = match layout {
+                Layout::Combined => 540,
+                Layout::PerWire => W,
+                Layout::TotalCurrent | Layout::TotalPower => 185,
+            };
+            for mask in 1..=63 {
+                data.faults = wireview_core::Faults::from_mask(mask);
+                let alarm = r.render(&data);
+                for y in 0..34 {
+                    for x in 0..right {
+                        assert_eq!(
+                            alarm.pixel(x, y),
+                            normal.pixel(x, y),
+                            "{layout}: fault {mask} covered a reading at {x},{y}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn simultaneous_faults_fit_in_a_dedicated_footer_on_every_layout() {
+        let mut data = demo_data();
+        data.faults = wireview_core::Faults::from_mask(63);
+        let summary = "FAULT: CHIP TEMP · SENSOR TEMP · TOTAL AMPS · WIRE AMPS · POWER · IMBALANCE";
+        assert_eq!(fault_summary(&data).as_deref(), Some(summary));
+        let fonts = Fonts::load().unwrap();
+        let face = fonts.face(10.0, false);
+        assert!(face.width(summary) <= 628, "the full fault list was clipped");
+        let mut expected = Canvas::new(SURFACE);
+        face.draw(&mut expected, 6, 36, summary, CRIT, crate::fonts::Anchor::Left);
+        for layout in [Layout::Combined, Layout::PerWire, Layout::TotalCurrent, Layout::TotalPower] {
+            let frame = renderer(layout, 10.5).render(&data);
+            for y in 36..H {
+                for x in 0..W {
+                    assert_eq!(frame.pixel(x, y), expected.pixel(x, y), "{layout}: footer overlap at {x},{y}");
+                }
+            }
+        }
     }
 }

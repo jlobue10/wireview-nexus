@@ -133,7 +133,7 @@ fault masks. Reads take well under a millisecond.
 | `--wire-limit` | `10.5` | Amps per wire treated as 100 % |
 | `--total-limit` | `55` | Amps total treated as 100 % |
 | `--cable-w` | cable's own rating | Cable rating in W (the WireView reports 600/450/300/150) |
-| `--fps` | `2` | Frames per second |
+| `--fps` | `2` | Frames per second, from 0.2 to 60 |
 | `--brightness` | | Panel backlight 0–100, set each time the panel is opened |
 | `--source` | `auto` | `auto`, `bridge`, `serial`, `hwinfo` |
 | `--serial-port` | auto-detect | COM port of the WireView |
