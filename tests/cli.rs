@@ -44,6 +44,10 @@ fn other_arguments_are_checked() {
         ["--source", "usb"],
         ["--brightness", "101"],
         ["--brightness", "-1"],
+        ["--fps", "0.1"],
+        ["--fps", "61"],
+        ["--fps", "1e10"],
+        ["--fps", "1e300"],
     ] {
         let (code, _, err) = run(&bad);
         assert_eq!(code, Some(2), "{bad:?}: {err}");

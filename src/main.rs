@@ -39,6 +39,29 @@ fn positive(s: &str) -> Result<f64, String> {
     Ok(v)
 }
 
+fn frame_rate(s: &str) -> Result<f64, String> {
+    let fps = positive(s)?;
+    if !(0.2..=60.0).contains(&fps) {
+        return Err("frames per second must be between 0.2 and 60".into());
+    }
+    Ok(fps)
+}
+
+#[cfg(test)]
+mod pacing_tests {
+    use super::*;
+
+    #[test]
+    fn accepted_frame_rates_keep_a_nonzero_bounded_period() {
+        for value in ["0.2", "2", "60"] {
+            let args = Args::try_parse_from(["wireview-nexus", "--fps", value]).unwrap();
+            let period = Duration::from_secs_f64(1.0 / args.fps);
+            assert!(!period.is_zero());
+            assert!(period <= Duration::from_secs(5));
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "wireview-nexus", version = VERSION, about = "WireView Pro II on the iCUE Nexus")]
 struct Args {
@@ -57,8 +80,8 @@ struct Args {
     #[arg(long, value_parser = positive, allow_negative_numbers = true)]
     cable_w: Option<f64>,
 
-    /// Frames per second
-    #[arg(long, value_parser = positive, default_value = "2", allow_negative_numbers = true)]
+    /// Frames per second (0.2-60)
+    #[arg(long, value_parser = frame_rate, default_value = "2", allow_negative_numbers = true)]
     fps: f64,
 
     /// Panel backlight 0-100, set when the panel is opened
@@ -133,7 +156,7 @@ fn main() -> ExitCode {
     }
 
     let mut nexus = Nexus::default();
-    let period = Duration::from_secs_f64(1.0 / args.fps.max(0.2));
+    let period = Duration::from_secs_f64(1.0 / args.fps);
     let mut backoff = 1.0_f64;
     println!(
         "WireView -> Nexus {VERSION}, layout={}, {} fps, source={}. Ctrl+C to stop.",
