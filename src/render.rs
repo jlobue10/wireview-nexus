@@ -239,6 +239,8 @@ impl Renderer {
             Layout::TotalPower => self.total_power(&mut pen, data),
         }
         if let Some(summary) = fault_summary(data) {
+            // Reserve the row even when a system font has taller descenders.
+            pen.canvas.rounded_rect(0, 36, 639, 47, 0, SURFACE);
             let tiny = pen.tiny;
             pen.text(6, 36, &summary, tiny, CRIT);
         }
@@ -348,7 +350,7 @@ impl Renderer {
         }
         pen.hbar(200, 8, 632, 22, ratio, lv.color());
         // Descenders must finish above the reserved fault footer at y=36.
-        pen.text(200, 23, sub, tiny, INK2);
+        pen.text(200, 21, sub, tiny, INK2);
         let color = match (&fault, lv) {
             (Some(_), _) | (None, Level::Crit) => CRIT,
             (None, Level::Warn) => WARN,
@@ -362,7 +364,7 @@ impl Renderer {
             }
             .to_string()
         });
-        pen.text_right(632, 23, &right, tiny, color);
+        pen.text_right(632, 21, &right, tiny, color);
     }
 
     fn total_current(&self, pen: &mut Pen<'_>, data: &Readings) {
