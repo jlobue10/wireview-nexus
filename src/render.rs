@@ -1,6 +1,6 @@
 //! The four layouts.
 //!
-//! * `combined`       six per-wire bars, total current, total power, temperature
+//! * `combined`       six per-wire bars, total current, total power, in/out temperatures
 //! * `per-wire`       six wide per-wire bars with amps
 //! * `total-current`  large total amps with a horizontal bar against the limit
 //! * `total-power`    large total watts with a horizontal bar against the cable rating
@@ -22,6 +22,10 @@ const TRACK: Rgb = [38, 38, 36];
 const ACCENT: Rgb = [240, 142, 51]; // Thermal Grizzly orange
 const WARN: Rgb = [250, 178, 25];
 const CRIT: Rgb = [208, 59, 59];
+
+/// Left edge of the total-power block on the combined layout; the in/out
+/// temperatures are right-aligned beside it.
+const WATTS_X: i32 = 430;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layout {
@@ -137,6 +141,11 @@ fn fault_summary(data: &Readings) -> Option<String> {
 /// `value` with `decimals` places, or `--` when there is none.
 fn number(value: Option<f64>, decimals: usize) -> String {
     value.map_or("--".to_string(), |v| format!("{v:.decimals$}"))
+}
+
+/// The connector's own two sensors, e.g. `in 35.5 · out 35.8 °C`.
+fn temps(data: &Readings) -> String {
+    format!("in {} · out {} °C", number(data.temp_in, 1), number(data.temp_out, 1))
 }
 
 /// Share of `limit`, for a bar; 0 when either is missing.
@@ -273,18 +282,18 @@ impl Renderer {
         }
         let watts = number(data.total_power, 0);
         pen.text(
-            450,
+            WATTS_X,
             0,
             &watts,
             big,
             if watts_level == Level::Ok { INK } else { watts_level.color() },
         );
-        pen.text(450 + big.width(&watts) + 4, 12, "W", mid, INK2);
+        pen.text(WATTS_X + big.width(&watts) + 4, 12, "W", mid, INK2);
         if !has_fault {
-            pen.text(450, 36, "TOTAL POWER", tiny, INK3);
+            pen.text(WATTS_X, 36, "TOTAL POWER", tiny, INK3);
         }
-        // Temperature / status column
-        pen.text_right(634, 4, &format!("{}°C", number(data.temp_out.or(data.temp_in), 1)), small, INK2);
+        // Temperatures / status column
+        pen.text_right(634, 5, &temps(data).to_uppercase(), tiny, INK2);
         let (status, severity) = self.combined_status(data);
         pen.text_right(634, 22, status, tiny, if severity == Level::Ok { INK3 } else { severity.color() });
         if !has_fault {
@@ -367,20 +376,28 @@ impl Renderer {
         pen.text_right(632, 21, &right, tiny, color);
     }
 
+    /// Caption and detail line of the `total-current` layout.
+    fn total_current_text(&self, data: &Readings) -> (String, String) {
+        (
+            format!("TOTAL CURRENT · LIMIT {} A", self.total_limit),
+            format!(
+                "{:.2} V avg · {:.0} W · {}",
+                data.avg_voltage.unwrap_or(0.0),
+                data.total_power.unwrap_or(0.0),
+                temps(data)
+            ),
+        )
+    }
+
     fn total_current(&self, pen: &mut Pen<'_>, data: &Readings) {
         let amps = data.total_current;
-        let sub = format!(
-            "{:.2} V avg · {:.0} W · limit {} A",
-            data.avg_voltage.unwrap_or(0.0),
-            data.total_power.unwrap_or(0.0),
-            self.total_limit
-        );
+        let (caption, sub) = self.total_current_text(data);
         let lv = level(amps, self.total_limit);
         self.hero(
             pen,
             &number(amps, 2),
             "A",
-            "TOTAL CURRENT",
+            &caption,
             &sub,
             ratio(amps, self.total_limit),
             lv,
@@ -388,20 +405,23 @@ impl Renderer {
         );
     }
 
+    /// Caption and detail line of the `total-power` layout.
+    fn total_power_text(&self, data: &Readings) -> (String, String) {
+        (
+            format!("TOTAL POWER · CABLE {} W", self.cable_w),
+            format!("{:.2} A · {}", data.total_current.unwrap_or(0.0), temps(data)),
+        )
+    }
+
     fn total_power(&self, pen: &mut Pen<'_>, data: &Readings) {
         let watts = data.total_power;
-        let sub = format!(
-            "{:.2} A · {:.1} °C · cable {} W",
-            data.total_current.unwrap_or(0.0),
-            data.temp_out.or(data.temp_in).unwrap_or(0.0),
-            self.cable_w
-        );
+        let (caption, sub) = self.total_power_text(data);
         let lv = level(watts, self.cable_w);
         self.hero(
             pen,
             &number(watts, 0),
             "W",
-            "TOTAL POWER",
+            &caption,
             &sub,
             ratio(watts, self.cable_w),
             lv,
@@ -464,6 +484,71 @@ mod tests {
         assert_eq!(faults(&data), None);
         data.faults = wireview_core::Faults::from_mask(0b010001);
         assert_eq!(faults(&data).as_deref(), Some("CHIP OVER-TEMP · OVER-POWER"));
+    }
+
+    #[test]
+    fn both_temperatures_are_labelled() {
+        let mut data = demo_data();
+        assert_eq!(temps(&data), "in 35.5 · out 35.8 °C");
+        data.temp_out = None;
+        assert_eq!(temps(&data), "in 35.5 · out -- °C");
+        data.temp_in = Some(-5.55);
+        assert_eq!(temps(&data), "in -5.5 · out -- °C");
+    }
+
+    /// Wide readings that every text block must still make room for.
+    fn wide_data() -> Readings {
+        let mut data = demo_data();
+        data.total_current = Some(55.55);
+        data.total_power = Some(666.0);
+        data.avg_voltage = Some(12.04);
+        data.temp_in = Some(-10.5);
+        data.temp_out = Some(-10.5);
+        data
+    }
+
+    /// The temperatures sit beside the total-power block; neither may be drawn over the other.
+    #[test]
+    fn combined_temperatures_clear_the_watts() {
+        let data = wide_data();
+        let fonts = Fonts::load().unwrap();
+        let (big, mid, tiny) = (fonts.face(30.0, true), fonts.face(17.0, true), fonts.face(10.0, false));
+        let amps_end = 300 + big.width("55.55") + 4 + mid.width("A");
+        assert!(amps_end + 8 <= WATTS_X, "amps end at {amps_end}");
+        let watts_end = WATTS_X + big.width("666") + 4 + mid.width("W");
+        let temps_start = 634 - tiny.width(&temps(&data).to_uppercase());
+        assert!(
+            temps_start >= watts_end + 6,
+            "temperatures start at {temps_start}, watts end at {watts_end}"
+        );
+        // Anti-aliased 10 px text has few fully covered pixels: count anything lit in its box.
+        let frame = renderer(Layout::Combined, 10.5).render(&data);
+        let lit = (usize::try_from(temps_start).unwrap()..W)
+            .flat_map(|x| (0..16).map(move |y| (x, y)))
+            .filter(|(x, y)| frame.pixel(*x, *y) != SURFACE)
+            .count();
+        assert!(lit > 40, "temperatures not drawn ({lit} pixels lit)");
+    }
+
+    /// Hero detail lines end before the status text, captions before the bar, with this font.
+    #[test]
+    fn hero_text_fits_beside_the_status_and_under_the_number() {
+        let fonts = Fonts::load().unwrap();
+        let tiny = fonts.face(10.0, false);
+        let r = Renderer::new(Layout::TotalPower, 10.5, 55.5, None, Fonts::load().unwrap());
+        let data = wide_data();
+        for (caption, sub) in [r.total_current_text(&data), r.total_power_text(&data)] {
+            assert_eq!(sub.matches("°C").count(), 1, "{sub}");
+            let sub_end = 200 + tiny.width(&sub);
+            let status_start = 632 - tiny.width("WITHIN LIMIT").max(tiny.width("DEVICE FAULT"));
+            assert!(
+                sub_end + 6 <= status_start,
+                "{sub:?} ends at {sub_end}, status starts at {status_start}"
+            );
+            assert!(8 + tiny.width(&caption) <= 200, "{caption:?} is too wide");
+        }
+        assert_eq!(r.total_power_text(&data).0, "TOTAL POWER · CABLE 600 W");
+        assert_eq!(r.total_current_text(&data).0, "TOTAL CURRENT · LIMIT 55.5 A");
     }
 
     fn count(c: &Canvas, x: std::ops::Range<usize>, color: Rgb) -> usize {
@@ -558,7 +643,7 @@ mod tests {
             assert_eq!(r.combined_status(&data), (power_label, severity));
             let frame = r.render(&data);
             if severity != Level::Ok {
-                assert!(count(&frame, 450..540, severity.color()) > 20, "total watts not coloured");
+                assert!(count(&frame, 430..520, severity.color()) > 20, "total watts not coloured");
             }
         }
     }
@@ -568,7 +653,7 @@ mod tests {
         let mut r = renderer(Layout::Combined, 10.5);
         let mut data = demo_data();
         data.cable_w = Some(150);
-        assert!(count(&r.render(&data), 450..W, CRIT) > 20);
+        assert!(count(&r.render(&data), 430..W, CRIT) > 20);
         assert_eq!(r.combined_status(&data), ("POWER OVER LIMIT", Level::Crit));
         data.total_power = Some(100.0);
         data.faults = wireview_core::Faults::from_mask(1);
