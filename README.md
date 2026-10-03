@@ -141,8 +141,10 @@ fault masks. Reads take well under a millisecond.
 | `--preview PNG` | | Render one frame to a file and exit (`--demo` for sample data) |
 
 Readings older than five seconds show as "Stale readings" instead of numbers. Bars turn to the
-warning colour at 80 % of a limit and to critical at 100 %, always with a text label. Device fault flags (over-current, over-power, over-temperature, imbalance) replace
-the temperature readout in red.
+warning colour at 80 % of a limit and to critical at 100 %, always with a text label. The `combined`,
+`total-current` and `total-power` layouts also show the connector's own in and out temperatures
+in °C. Device fault flags (over-current, over-power, over-temperature, imbalance) are listed in
+red on the bottom row.
 
 ## Companion project
 
