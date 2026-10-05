@@ -76,13 +76,7 @@ fn csv_log_is_written_even_without_a_nexus() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let file = loop {
         let found = std::fs::read_dir(&logs).ok().and_then(|d| d.flatten().next()).map(|e| e.path());
-        if let Some(f) = found.filter(|f| {
-            std::fs::read_to_string(f).is_ok_and(|t| {
-                t.matches("\r\n")
-                .count()
-                    >= 3
-            })
-        }) {
+        if let Some(f) = found.filter(|f| std::fs::read_to_string(f).is_ok_and(|t| t.matches("\r\n").count() >= 3)) {
             break f;
         }
         assert!(
