@@ -12,7 +12,8 @@
 # executable next to it; -Ref/-Sha256 unused).
 # Remove:
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
-# Options: -Layout combined|per-wire|total-current|total-power, -ExtraArgs '--fps 4', -NoStart
+# Options: -Layout combined|per-wire|total-current|total-power, -ExtraArgs '--fps 4', -NoStart,
+#          -Log [-LogDir <folder>] (CSV log of the readings, off by default)
 #
 # What it does: downloads wireview-nexus.exe (one self-contained file, nothing else to install),
 # checks its SHA-256, registers a per-user Scheduled Task that runs the daemon at logon (no admin
@@ -25,7 +26,9 @@ param(
     [string]$Ref = '',
     [string]$Sha256 = '',
     [switch]$Uninstall,
-    [switch]$NoStart
+    [switch]$NoStart,
+    [switch]$Log,
+    [string]$LogDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -175,6 +178,14 @@ $version = (& $exePath --version | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) { throw "$exePath does not run (exit code $LASTEXITCODE)" }
 Say "Installed $version"
 
+# --- optional CSV log (off unless -Log) ----------------------------------------
+# One log-<date>-<time>.csv per start, a row a minute, in the format the Thermal Grizzly
+# WireView app exports. -LogDir chooses the folder; the default is logs\ in the install folder.
+if ($Log) {
+    if (-not $LogDir) { $LogDir = Join-Path $Dir 'logs' }
+    $BaseArgs = (@($BaseArgs, "--csv-log `"$LogDir`"") | Where-Object { $_ }) -join ' '
+}
+
 # --- run at logon (per-user scheduled task) ----------------------------------
 $daemonArgs = (@($BaseArgs, $ExtraArgs) | Where-Object { $_ }) -join ' '
 
@@ -207,4 +218,6 @@ Write-Host '                 the WireView over USB. Close the Thermal Grizzly Wi
 Write-Host '                 auto-start) so the COM port is free. No HWiNFO needed.'
 Write-Host '  iCUE         : give the Nexus an empty screen (no widgets, black background) so iCUE does not'
 Write-Host '                 redraw over the daemon.'
+if ($Log) { Write-Host "  CSV log      : $LogDir\log-<date>-<time>.csv, a row a minute (WireView app export format)" }
+else { Write-Host '  CSV log      : off   (install.ps1 -Log, or -Log -LogDir <folder>)' }
 Write-Host "  Manage       : Task Scheduler > '$TaskName'   |   uninstall: install.ps1 -Uninstall"

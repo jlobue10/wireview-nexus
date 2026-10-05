@@ -22,6 +22,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
+use wireview_core::csvlog::{self, CsvLog};
 use wireview_core::{DEFAULT_BRIDGE_URL, Reader, Readings, Source};
 
 use crate::canvas::{Canvas, H, W};
@@ -107,6 +108,15 @@ struct Args {
     /// With --preview: use sample data instead of the device
     #[arg(long)]
     demo: bool,
+
+    /// Also write the readings to a new log-<date>-<time>.csv in this directory,
+    /// in the format the Thermal Grizzly WireView app exports (off by default)
+    #[arg(long, value_name = "DIR")]
+    csv_log: Option<PathBuf>,
+
+    /// Seconds between CSV rows (1-86400)
+    #[arg(long, value_name = "SECONDS", default_value = "60", value_parser = csvlog::parse_interval, requires = "csv_log")]
+    csv_interval: Duration,
 }
 
 fn write_png(path: &Path, frame: &Canvas) -> Result<(), String> {
@@ -155,6 +165,20 @@ fn main() -> ExitCode {
         };
     }
 
+    let mut csv_log = match &args.csv_log {
+        None => None,
+        Some(dir) => match CsvLog::create(dir, args.csv_interval) {
+            Ok(log) => {
+                println!("CSV log: {} (a row every {} s)", log.path().display(), log.interval().as_secs());
+                Some(log)
+            }
+            Err(e) => {
+                eprintln!("--csv-log {}: cannot create the log file: {e}", dir.display());
+                return ExitCode::from(2);
+            }
+        },
+    };
+
     let mut nexus = Nexus::default();
     let period = Duration::from_secs_f64(1.0 / args.fps);
     let mut backoff = 1.0_f64;
@@ -165,6 +189,23 @@ fn main() -> ExitCode {
     let mut last_source: Option<String> = None;
     loop {
         let t0 = Instant::now();
+        // A reader bug must not kill the daemon.
+        let data = catch_unwind(AssertUnwindSafe(|| reader.read())).unwrap_or_else(|p| {
+            let why = panic_text(p);
+            println!("read failed: {why}");
+            Readings::problem(args.source.as_str(), "Reader error", &why)
+        });
+        let src = data.describe_source();
+        if last_source.as_deref() != Some(&src) {
+            println!("readings: {src}");
+            last_source = Some(src);
+        }
+        if let Some(log) = csv_log.as_mut() {
+            if let Err(e) = log.record(&data) {
+                println!("csv log: cannot write {}: {e}; logging stopped", log.path().display());
+                csv_log = None;
+            }
+        }
         let was_open = nexus.is_open();
         if !nexus.open() {
             println!("Nexus not found, retrying...");
@@ -177,17 +218,6 @@ fn main() -> ExitCode {
             if let Some(pct) = args.brightness {
                 nexus.set_brightness(pct);
             }
-        }
-        // A reader bug must not kill the daemon.
-        let data = catch_unwind(AssertUnwindSafe(|| reader.read())).unwrap_or_else(|p| {
-            let why = panic_text(p);
-            println!("read failed: {why}");
-            Readings::problem(args.source.as_str(), "Reader error", &why)
-        });
-        let src = data.describe_source();
-        if last_source.as_deref() != Some(&src) {
-            println!("readings: {src}");
-            last_source = Some(src);
         }
         // Bad data must not kill it either.
         let frame = catch_unwind(AssertUnwindSafe(|| renderer.render(&data))).unwrap_or_else(|p| {

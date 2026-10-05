@@ -48,10 +48,65 @@ fn other_arguments_are_checked() {
         ["--fps", "61"],
         ["--fps", "1e10"],
         ["--fps", "1e300"],
+        ["--csv-interval", "5"],
     ] {
         let (code, _, err) = run(&bad);
         assert_eq!(code, Some(2), "{bad:?}: {err}");
     }
+    for bad in ["0", "0.5", "forever", "90000"] {
+        let (code, _, err) = run(&["--csv-log", "x", "--csv-interval", bad]);
+        assert_eq!(code, Some(2), "{bad}: {err}");
+    }
+}
+
+#[test]
+fn csv_log_is_written_even_without_a_nexus() {
+    use std::io::Read;
+    use std::process::Stdio;
+    let dir = std::env::temp_dir().join(format!("wireview-nexus-csv-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let logs = dir.join("logs");
+    let mut child = std::process::Command::new(BIN)
+        .args(["--source", "hwinfo", "--csv-log", logs.to_str().unwrap(), "--csv-interval", "1"])
+        .env("WIREVIEW_BRIDGE_SECRET", dir.join("no-such-secret"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let file = loop {
+        let found = std::fs::read_dir(&logs).ok().and_then(|d| d.flatten().next()).map(|e| e.path());
+        if let Some(f) = found.filter(|f| {
+            std::fs::read_to_string(f).is_ok_and(|t| {
+                t.matches("\r\n")
+                .count()
+                    >= 3
+            })
+        }) {
+            break f;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no CSV with two rows appeared in {}",
+            logs.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    child.kill().unwrap();
+    let mut out = String::new();
+    child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+    child.wait().unwrap();
+    let name = file.file_name().unwrap().to_str().unwrap().to_string();
+    assert!(name.starts_with("log-") && name.ends_with(".csv") && name.len() == 23, "{name}");
+    let text = std::fs::read_to_string(&file).unwrap();
+    let lines: Vec<&str> = text.split("\r\n").collect();
+    assert!(lines[0].starts_with("Timestamp,Connected,HW,FW,SumPowerW,"), "{}", lines[0]);
+    // No HWiNFO here: rows are not-ok, with zeros, but still complete and the daemon keeps going.
+    assert!(lines[1].contains(",False,,,0.000,0.000,"), "{}", lines[1]);
+    assert_eq!(lines[1].split(',').count(), 22);
+    assert!(out.contains("CSV log: ") && out.contains("a row every 1 s"), "{out}");
+    assert!(!out.contains("logging stopped"), "{out}");
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

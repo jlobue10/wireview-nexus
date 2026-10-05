@@ -78,7 +78,9 @@ gh attestation verify wireview-nexus.exe --repo jlobue10/wireview-nexus   # opti
 powershell -ExecutionPolicy Bypass -File install.ps1 -Layout combined
 ```
 
-`-NoStart` registers without starting.
+`-NoStart` registers without starting. `-Log` also writes the readings to a CSV log (off by
+default; see [CSV log](#csv-log)), in `logs\` under the install folder unless `-LogDir <folder>`
+says otherwise.
 
 <details>
 <summary>Build from source</summary>
@@ -139,12 +141,29 @@ fault masks. Reads take well under a millisecond.
 | `--serial-port` | auto-detect | COM port of the WireView |
 | `--bridge-url` | `http://localhost:8765/api/wireview` | Bridge to ask in `auto`/`bridge` mode |
 | `--preview PNG` | | Render one frame to a file and exit (`--demo` for sample data) |
+| `--csv-log DIR` | off | Also write the readings to a `log-<date>-<time>.csv` in `DIR` (see below) |
+| `--csv-interval` | `60` | Seconds between CSV rows, 1 to 86400 |
 
 Readings older than five seconds show as "Stale readings" instead of numbers. Bars turn to the
 warning colour at 80 % of a limit and to critical at 100 %, always with a text label. The `combined`,
 `total-current` and `total-power` layouts also show the connector's own in and out temperatures
 in °C. Device fault flags (over-current, over-power, over-temperature, imbalance) are listed in
 red on the bottom row.
+
+## CSV log
+
+Off by default. `--csv-log <DIR>` (installer: `-Log`, `-LogDir`) writes a new
+`log-<date>-<time>.csv` in that folder each time the daemon starts and appends a row every
+`--csv-interval` seconds (default 60, like the WireView app's own log), each row flushed as it is
+written; it keeps logging while the Nexus is unplugged. The file matches the CSV the Thermal Grizzly WireView app exports, so the same
+spreadsheets and scripts read both: the header
+`Timestamp,Connected,HW,FW,SumPowerW,SumCurrentA,OnboardInC,OnboardOutC,Ext1C,Ext2C,V1..V6,I1..I6`,
+local-time timestamps with seven fraction digits, three decimals for watts, amps and volts, two
+for °C, `0` for a value the device did not report (an absent external probe, say), CRLF line
+endings. `Connected` is `True` on rows that hold a live reading; `FW` is the firmware version the
+device reports; `HW` is empty because the serial protocol has no hardware revision. Readings
+taken through a running bridge are logged the same way. Run only one logger per device: if the
+bridge logs too, give the two different folders.
 
 ## Companion project
 
