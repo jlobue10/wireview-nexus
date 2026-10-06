@@ -14,6 +14,7 @@ mod canvas;
 mod fonts;
 mod nexus;
 mod render;
+mod theme;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -29,6 +30,7 @@ use crate::canvas::{Canvas, H, W};
 use crate::fonts::Fonts;
 use crate::nexus::Nexus;
 use crate::render::{Layout, Renderer, demo_data};
+use crate::theme::Theme;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -68,6 +70,10 @@ mod pacing_tests {
 struct Args {
     #[arg(long, default_value = "combined", value_name = "combined|per-wire|total-current|total-power")]
     layout: Layout,
+
+    /// Colour theme
+    #[arg(long, default_value = "grizzly", value_name = "grizzly|corsair|ice|mono|nord|light")]
+    theme: Theme,
 
     /// Amps per wire = 100 %
     #[arg(long, value_parser = positive, default_value = "10.5", allow_negative_numbers = true)]
@@ -148,7 +154,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut renderer = Renderer::new(args.layout, args.wire_limit, args.total_limit, args.cable_w, fonts);
+    let mut renderer = Renderer::new(args.layout, args.wire_limit, args.total_limit, args.cable_w, args.theme, fonts);
     let reader = Reader::new(args.source, args.serial_port, Some(args.bridge_url));
 
     if let Some(path) = &args.preview {

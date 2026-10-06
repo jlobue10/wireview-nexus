@@ -12,16 +12,9 @@ use wireview_core::Readings;
 
 use crate::canvas::{Canvas, Rgb};
 use crate::fonts::{Anchor, Face, Fonts};
+use crate::theme::Theme;
 
-// Text in ink tokens; status colours only with a label.
-const SURFACE: Rgb = [0, 0, 0];
-const INK: Rgb = [255, 255, 255];
-const INK2: Rgb = [185, 184, 176];
-const INK3: Rgb = [122, 121, 115];
-const TRACK: Rgb = [38, 38, 36];
-const ACCENT: Rgb = [240, 142, 51]; // Thermal Grizzly orange
-const WARN: Rgb = [250, 178, 25];
-const CRIT: Rgb = [208, 59, 59];
+// Colours come from the theme (src/theme.rs); status colours only with a label.
 
 /// Left edge of the total-power block on the combined layout; the in/out
 /// temperatures are right-aligned beside it.
@@ -75,12 +68,13 @@ pub enum Level {
     Crit,
 }
 
-impl Level {
-    fn color(self) -> Rgb {
-        match self {
-            Level::Ok => ACCENT,
-            Level::Warn => WARN,
-            Level::Crit => CRIT,
+impl Theme {
+    /// Bar colour for a level.
+    fn level(&self, lv: Level) -> Rgb {
+        match lv {
+            Level::Ok => self.accent,
+            Level::Warn => self.warn,
+            Level::Crit => self.crit,
         }
     }
 }
@@ -163,11 +157,13 @@ pub struct Renderer {
     /// Follow the rating the cable reports.
     cable_w_auto: bool,
     cable_w: f64,
+    theme: Theme,
     fonts: Fonts,
 }
 
 struct Pen<'a> {
     canvas: Canvas,
+    theme: Theme,
     big: Face<'a>,
     mid: Face<'a>,
     small: Face<'a>,
@@ -184,17 +180,17 @@ impl Pen<'_> {
     }
 
     fn hbar(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, ratio: f64, color: Rgb) {
-        self.canvas.rounded_rect(x0, y0, x1, y1, 3, TRACK);
+        self.canvas.rounded_rect(x0, y0, x1, y1, 3, self.theme.track);
         let w = (f64::from(x1 - x0) * ratio.clamp(0.0, 1.0)) as i32;
         if w > 0 {
             self.canvas.rounded_rect(x0, y0, x0 + w.max(3), y1, 3, color);
         }
         let mark = x0 + (f64::from(x1 - x0) * 0.8) as i32; // 80 % marker
-        self.canvas.vline(mark, y0, y1, INK3);
+        self.canvas.vline(mark, y0, y1, self.theme.ink3);
     }
 
     fn vbar(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, ratio: f64, color: Rgb) {
-        self.canvas.rounded_rect(x0, y0, x1, y1, 2, TRACK);
+        self.canvas.rounded_rect(x0, y0, x1, y1, 2, self.theme.track);
         let h = (f64::from(y1 - y0) * ratio.clamp(0.0, 1.0)) as i32;
         if h > 0 {
             self.canvas.rounded_rect(x0, y1 - h.max(2), x1, y1, 2, color);
@@ -204,13 +200,14 @@ impl Pen<'_> {
 
 impl Renderer {
     /// `cable_w` of `None` follows the rating the cable reports (600 W until it does).
-    pub fn new(layout: Layout, wire_limit: f64, total_limit: f64, cable_w: Option<f64>, fonts: Fonts) -> Self {
+    pub fn new(layout: Layout, wire_limit: f64, total_limit: f64, cable_w: Option<f64>, theme: Theme, fonts: Fonts) -> Self {
         Renderer {
             layout,
             wire_limit,
             total_limit,
             cable_w_auto: cable_w.is_none(),
             cable_w: cable_w.unwrap_or(600.0),
+            theme,
             fonts,
         }
     }
@@ -222,7 +219,8 @@ impl Renderer {
             }
         }
         let mut pen = Pen {
-            canvas: Canvas::new(SURFACE),
+            canvas: Canvas::new(self.theme.surface),
+            theme: self.theme,
             big: self.fonts.face(30.0, true),
             mid: self.fonts.face(17.0, true),
             small: self.fonts.face(12.0, false),
@@ -230,15 +228,15 @@ impl Renderer {
         };
         if !data.ok {
             let (mid, small, tiny) = (pen.mid, pen.small, pen.tiny);
-            pen.text(8, 4, "WIREVIEW PRO II", tiny, INK3);
+            pen.text(8, 4, "WIREVIEW PRO II", tiny, self.theme.ink3);
             pen.text(
                 8,
                 18,
                 data.status.as_deref().filter(|s| !s.is_empty()).unwrap_or("No data"),
                 mid,
-                INK2,
+                self.theme.ink2,
             );
-            pen.text_right(632, 30, data.hint.as_deref().unwrap_or_default(), small, INK3);
+            pen.text_right(632, 30, data.hint.as_deref().unwrap_or_default(), small, self.theme.ink3);
             return pen.canvas;
         }
         match self.layout {
@@ -249,9 +247,9 @@ impl Renderer {
         }
         if let Some(summary) = fault_summary(data) {
             // Reserve the row even when a system font has taller descenders.
-            pen.canvas.rounded_rect(0, 36, 639, 47, 0, SURFACE);
+            pen.canvas.rounded_rect(0, 36, 639, 47, 0, self.theme.surface);
             let tiny = pen.tiny;
-            pen.text(6, 36, &summary, tiny, CRIT);
+            pen.text(6, 36, &summary, tiny, self.theme.crit);
         }
         pen.canvas
     }
@@ -263,22 +261,32 @@ impl Renderer {
         let mut x = 6;
         for pin in &data.pins {
             let lv = level(pin.current, self.wire_limit);
-            pen.vbar(x, 3, x + 14, 33, ratio(pin.current, self.wire_limit) * 0.8, lv.color());
-            pen.text(x + 18, 2, &number(pin.current, 1), small, INK);
-            pen.text(x + 18, 20, &format!("P{}", pin.n), tiny, INK3);
+            pen.vbar(x, 3, x + 14, 33, ratio(pin.current, self.wire_limit) * 0.8, self.theme.level(lv));
+            pen.text(x + 18, 2, &number(pin.current, 1), small, self.theme.ink);
+            pen.text(x + 18, 20, &format!("P{}", pin.n), tiny, self.theme.ink3);
             x += 44;
         }
         if !has_fault {
-            pen.text(6, 36, "PER-WIRE A", tiny, INK3);
+            pen.text(6, 36, "PER-WIRE A", tiny, self.theme.ink3);
         }
         // Totals
         let amps_level = level(data.total_current, self.total_limit);
         let watts_level = level(data.total_power, self.cable_w);
         let amps = number(data.total_current, 2);
-        pen.text(300, 0, &amps, big, if amps_level == Level::Ok { INK } else { amps_level.color() });
-        pen.text(300 + big.width(&amps) + 4, 12, "A", mid, INK2);
+        pen.text(
+            300,
+            0,
+            &amps,
+            big,
+            if amps_level == Level::Ok {
+                self.theme.ink
+            } else {
+                self.theme.level(amps_level)
+            },
+        );
+        pen.text(300 + big.width(&amps) + 4, 12, "A", mid, self.theme.ink2);
         if !has_fault {
-            pen.text(300, 36, "TOTAL CURRENT", tiny, INK3);
+            pen.text(300, 36, "TOTAL CURRENT", tiny, self.theme.ink3);
         }
         let watts = number(data.total_power, 0);
         pen.text(
@@ -286,19 +294,33 @@ impl Renderer {
             0,
             &watts,
             big,
-            if watts_level == Level::Ok { INK } else { watts_level.color() },
+            if watts_level == Level::Ok {
+                self.theme.ink
+            } else {
+                self.theme.level(watts_level)
+            },
         );
-        pen.text(WATTS_X + big.width(&watts) + 4, 12, "W", mid, INK2);
+        pen.text(WATTS_X + big.width(&watts) + 4, 12, "W", mid, self.theme.ink2);
         if !has_fault {
-            pen.text(WATTS_X, 36, "TOTAL POWER", tiny, INK3);
+            pen.text(WATTS_X, 36, "TOTAL POWER", tiny, self.theme.ink3);
         }
         // Temperatures / status column
-        pen.text_right(634, 5, &temps(data).to_uppercase(), tiny, INK2);
+        pen.text_right(634, 5, &temps(data).to_uppercase(), tiny, self.theme.ink2);
         let (status, severity) = self.combined_status(data);
-        pen.text_right(634, 22, status, tiny, if severity == Level::Ok { INK3 } else { severity.color() });
+        pen.text_right(
+            634,
+            22,
+            status,
+            tiny,
+            if severity == Level::Ok {
+                self.theme.ink3
+            } else {
+                self.theme.level(severity)
+            },
+        );
         if !has_fault {
             if let Some(v) = data.avg_voltage {
-                pen.text_right(634, 35, &format!("{v:.2} V"), tiny, INK3);
+                pen.text_right(634, 35, &format!("{v:.2} V"), tiny, self.theme.ink3);
             }
         }
     }
@@ -333,37 +355,37 @@ impl Renderer {
         for pin in &data.pins {
             let lv = level(pin.current, self.wire_limit);
             let amps = number(pin.current, 2);
-            pen.text(x, 0, &format!("P{}", pin.n), tiny, INK3);
-            pen.text(x + 18, -3, &amps, mid, INK);
-            pen.text(x + 18 + mid.width(&amps) + 2, 2, "A", tiny, INK2);
-            pen.hbar(x, 22, x + 92, 32, ratio(pin.current, self.wire_limit) * 0.8, lv.color());
+            pen.text(x, 0, &format!("P{}", pin.n), tiny, self.theme.ink3);
+            pen.text(x + 18, -3, &amps, mid, self.theme.ink);
+            pen.text(x + 18 + mid.width(&amps) + 2, 2, "A", tiny, self.theme.ink2);
+            pen.hbar(x, 22, x + 92, 32, ratio(pin.current, self.wire_limit) * 0.8, self.theme.level(lv));
             if !has_fault {
                 if let Some(p) = pin.power {
-                    pen.text(x, 34, &format!("{p:.0} W"), tiny, INK3);
+                    pen.text(x, 34, &format!("{p:.0} W"), tiny, self.theme.ink3);
                 }
             }
             x += 104;
         }
         if !has_fault {
-            pen.text_right(634, 36, &format!("max {} A", self.wire_limit), tiny, INK3);
+            pen.text_right(634, 36, &format!("max {} A", self.wire_limit), tiny, self.theme.ink3);
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn hero(&self, pen: &mut Pen<'_>, value: &str, unit: &str, caption: &str, sub: &str, ratio: f64, lv: Level, fault: Option<String>) {
         let (big, mid, tiny) = (pen.big, pen.mid, pen.tiny);
-        pen.text(8, -2, value, big, INK);
-        pen.text(8 + big.width(value) + 6, 10, unit, mid, INK2);
+        pen.text(8, -2, value, big, self.theme.ink);
+        pen.text(8 + big.width(value) + 6, 10, unit, mid, self.theme.ink2);
         if fault.is_none() {
-            pen.text(8, 36, caption, tiny, INK3);
+            pen.text(8, 36, caption, tiny, self.theme.ink3);
         }
-        pen.hbar(200, 8, 632, 22, ratio, lv.color());
+        pen.hbar(200, 8, 632, 22, ratio, self.theme.level(lv));
         // Descenders must finish above the reserved fault footer at y=36.
-        pen.text(200, 21, sub, tiny, INK2);
+        pen.text(200, 21, sub, tiny, self.theme.ink2);
         let color = match (&fault, lv) {
-            (Some(_), _) | (None, Level::Crit) => CRIT,
-            (None, Level::Warn) => WARN,
-            (None, Level::Ok) => INK3,
+            (Some(_), _) | (None, Level::Crit) => self.theme.crit,
+            (None, Level::Warn) => self.theme.warn,
+            (None, Level::Ok) => self.theme.ink3,
         };
         let right = fault.map(|_| "DEVICE FAULT".to_string()).unwrap_or_else(|| {
             match lv {
@@ -459,6 +481,15 @@ pub fn demo_data() -> Readings {
 mod tests {
     use super::*;
     use crate::canvas::{H, W};
+    use crate::theme::{ALL, GRIZZLY};
+
+    const SURFACE: Rgb = GRIZZLY.surface;
+    const INK: Rgb = GRIZZLY.ink;
+    const INK2: Rgb = GRIZZLY.ink2;
+    const TRACK: Rgb = GRIZZLY.track;
+    const ACCENT: Rgb = GRIZZLY.accent;
+    const WARN: Rgb = GRIZZLY.warn;
+    const CRIT: Rgb = GRIZZLY.crit;
 
     #[test]
     fn levels() {
@@ -535,7 +566,7 @@ mod tests {
     fn hero_text_fits_beside_the_status_and_under_the_number() {
         let fonts = Fonts::load().unwrap();
         let tiny = fonts.face(10.0, false);
-        let r = Renderer::new(Layout::TotalPower, 10.5, 55.5, None, Fonts::load().unwrap());
+        let r = Renderer::new(Layout::TotalPower, 10.5, 55.5, None, GRIZZLY, Fonts::load().unwrap());
         let data = wide_data();
         for (caption, sub) in [r.total_current_text(&data), r.total_power_text(&data)] {
             assert_eq!(sub.matches("°C").count(), 1, "{sub}");
@@ -567,7 +598,7 @@ mod tests {
 
     /// Needs a system font; every supported platform has one of the three.
     fn renderer(layout: Layout, wire_limit: f64) -> Renderer {
-        Renderer::new(layout, wire_limit, 55.0, None, Fonts::load().expect("a system font"))
+        Renderer::new(layout, wire_limit, 55.0, None, GRIZZLY, Fonts::load().expect("a system font"))
     }
 
     #[test]
@@ -583,6 +614,49 @@ mod tests {
                 "{name}: alarm colour on healthy data"
             );
         }
+    }
+
+    /// Every theme draws its own text, track and fill colours on every layout, and keeps the
+    /// alarm colours for alarms.
+    #[test]
+    fn every_theme_draws_its_own_colours() {
+        let fonts = Fonts::load().unwrap();
+        for theme in ALL {
+            for name in Layout::NAMES {
+                let mut r = Renderer::new(name.parse().unwrap(), 10.5, 55.0, None, theme, Fonts::load().unwrap());
+                let frame = r.render(&demo_data());
+                assert!(count(&frame, 0..W, theme.ink) > 50, "{theme}/{name}: no text");
+                assert!(count(&frame, 0..W, theme.track) > 200, "{theme}/{name}: no bar track");
+                assert!(count(&frame, 0..W, theme.accent) > 50, "{theme}/{name}: no bar fill");
+                assert_eq!(
+                    count(&frame, 0..W, theme.warn) + count(&frame, 0..W, theme.crit),
+                    0,
+                    "{theme}/{name}: alarm colour on healthy data"
+                );
+                assert!(
+                    count(&frame, 0..W, theme.surface) > W * H / 2,
+                    "{theme}/{name}: background not the theme's"
+                );
+                let mut data = demo_data();
+                data.faults = wireview_core::Faults::from_mask(63);
+                let alarm = r.render(&data);
+                // Anti-aliased 10 px text has few fully covered pixels: the footer must be lit, in
+                // something closer to the critical colour than to the accent.
+                let near = |a: Rgb, b: Rgb| a.iter().zip(b).map(|(x, y)| (i32::from(*x) - i32::from(y)).abs()).sum::<i32>();
+                let footer = (0..W)
+                    .flat_map(|x| (36..H).map(move |y| (x, y)))
+                    .map(|(x, y)| alarm.pixel(x, y))
+                    .filter(|p| *p != theme.surface)
+                    .collect::<Vec<_>>();
+                assert!(footer.len() > 20, "{theme}/{name}: fault footer not drawn");
+                let critical = footer.iter().filter(|p| near(**p, theme.crit) < near(**p, theme.accent)).count();
+                assert!(
+                    critical > 20,
+                    "{theme}/{name}: fault footer not in the critical colour ({critical} px)"
+                );
+            }
+        }
+        drop(fonts);
     }
 
     #[test]
@@ -619,13 +693,13 @@ mod tests {
         let mut data = demo_data();
         data.cable_w = Some(150); // 154.5 W on a 150 W cable
         assert!(count(&r.render(&data), 190..W, CRIT) > 50);
-        let mut fixed = Renderer::new(Layout::TotalPower, 10.5, 55.0, Some(600.0), Fonts::load().unwrap());
+        let mut fixed = Renderer::new(Layout::TotalPower, 10.5, 55.0, Some(600.0), GRIZZLY, Fonts::load().unwrap());
         assert_eq!(count(&fixed.render(&data), 190..W, CRIT), 0);
     }
 
     #[test]
     fn combined_totals_warn_at_eighty_percent_and_alarm_at_the_limit() {
-        let mut r = Renderer::new(Layout::Combined, 10.5, 20.0, Some(200.0), Fonts::load().unwrap());
+        let mut r = Renderer::new(Layout::Combined, 10.5, 20.0, Some(200.0), GRIZZLY, Fonts::load().unwrap());
         for (value, severity, amps_label, power_label) in [
             (0.799, Level::Ok, "OK", "OK"),
             (0.8, Level::Warn, "AMPS NEAR LIMIT", "POWER NEAR LIMIT"),
@@ -636,14 +710,14 @@ mod tests {
             assert_eq!(r.combined_status(&data), (amps_label, severity));
             let frame = r.render(&data);
             if severity != Level::Ok {
-                assert!(count(&frame, 300..440, severity.color()) > 20, "total amps not coloured");
+                assert!(count(&frame, 300..440, GRIZZLY.level(severity)) > 20, "total amps not coloured");
             }
             data.total_current = Some(12.8);
             data.total_power = Some(200.0 * value);
             assert_eq!(r.combined_status(&data), (power_label, severity));
             let frame = r.render(&data);
             if severity != Level::Ok {
-                assert!(count(&frame, 430..520, severity.color()) > 20, "total watts not coloured");
+                assert!(count(&frame, 430..520, GRIZZLY.level(severity)) > 20, "total watts not coloured");
             }
         }
     }

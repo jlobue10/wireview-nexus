@@ -41,7 +41,7 @@ folder is replaced. Then:
 Pick a layout or pass options:
 
 ```
-powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Layout per-wire -ExtraArgs '--fps 4'"
+powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Layout per-wire -Theme ice -ExtraArgs '--fps 4'"
 ```
 
 Re-running the installer updates the executable and restarts the daemon. It leaves a copy of
@@ -132,6 +132,7 @@ fault masks. Reads take well under a millisecond.
 | Option | Default | Meaning |
 |---|---|---|
 | `--layout` | `combined` | `combined`, `per-wire`, `total-current`, `total-power` |
+| `--theme` | `grizzly` | Colour theme: `grizzly` (orange on black), `corsair` (yellow), `ice` (cyan), `mono` (greyscale), `nord`, `light` (dark text on light); installer `-Theme` |
 | `--wire-limit` | `10.5` | Amps per wire treated as 100 % |
 | `--total-limit` | `55` | Amps total treated as 100 % |
 | `--cable-w` | cable's own rating | Cable rating in W (the WireView reports 600/450/300/150) |
@@ -143,6 +144,11 @@ fault masks. Reads take well under a millisecond.
 | `--preview PNG` | | Render one frame to a file and exit (`--demo` for sample data) |
 | `--csv-log DIR` | off | Also write the readings to a `log-<date>-<time>.csv` in `DIR` (see below) |
 | `--csv-interval` | `60` | Seconds between CSV rows, 1 to 86400 |
+
+Themes only change colours; every theme keeps its warning and critical colours apart from
+the accent, and the text always says what a colour means. The Xeneon Edge widgets offer the
+same six palettes as `?theme=`, so both screens can match. Previews of every theme are on the
+[project page](https://jlobue10.github.io/wireview-nexus/).
 
 Readings older than five seconds show as "Stale readings" instead of numbers. Bars turn to the
 warning colour at 80 % of a limit and to critical at 100 %, always with a text label. The `combined`,
