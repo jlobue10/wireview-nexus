@@ -71,8 +71,8 @@ struct Args {
     #[arg(long, default_value = "combined", value_name = "combined|per-wire|total-current|total-power")]
     layout: Layout,
 
-    /// Colour theme
-    #[arg(long, default_value = "grizzly", value_name = "grizzly|corsair|ice|mono|nord|light")]
+    /// Colour theme (see README: grizzly, corsair, ice, mono, nord, light, dracula, gruvbox, ...)
+    #[arg(long, default_value = "grizzly", value_name = "NAME")]
     theme: Theme,
 
     /// Amps per wire = 100 %
