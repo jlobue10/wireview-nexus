@@ -35,6 +35,14 @@
   <figure><img src="img/nexus_total-current.png" alt="total current layout"><figcaption><code>--layout total-current</code> · total amps against the total limit, with average voltage, watts and in/out temperatures</figcaption></figure>
   <figure><img src="img/nexus_total-power.png" alt="total power layout"><figcaption><code>--layout total-power</code> · total watts against the cable rating, with amps and in/out temperatures</figcaption></figure>
 
+  <h2>Themes</h2>
+  <p>Same layouts, different palettes; every theme keeps its warning and critical colours apart from the accent. The Xeneon Edge widgets offer the same six as <code>?theme=</code>.</p>
+  <figure><img src="img/nexus_theme_grizzly.png" alt="grizzly theme"><figcaption><code>--theme grizzly</code> · Thermal Grizzly orange on black (default)</figcaption></figure>
+  <figure><img src="img/nexus_theme_corsair.png" alt="corsair theme"><figcaption><code>--theme corsair</code> · yellow accent, orange warnings</figcaption></figure>
+  <figure><img src="img/nexus_theme_ice.png" alt="ice theme"><figcaption><code>--theme ice</code> · cyan accent</figcaption></figure>
+  <figure><img src="img/nexus_theme_mono.png" alt="mono theme"><figcaption><code>--theme mono</code> · greyscale, alarms in colour</figcaption></figure>
+  <figure><img src="img/nexus_theme_nord.png" alt="nord theme"><figcaption><code>--theme nord</code> · Nord frost blue on polar night</figcaption></figure>
+  <figure><img src="img/nexus_theme_light.png" alt="light theme"><figcaption><code>--theme light</code> · dark text on a light background</figcaption></figure>
   <h2>How it works</h2>
   <pre>WireView Pro II ──USB serial──▶ wireview-nexus.exe ──HID frames──▶ iCUE Nexus</pre>
   <ol>
@@ -47,6 +55,7 @@
   <table>
     <tr><th>Option</th><th>Default</th><th>Meaning</th></tr>
     <tr><td><code>--layout</code></td><td><code>combined</code></td><td>combined, per-wire, total-current, total-power</td></tr>
+    <tr><td><code>--theme</code></td><td><code>grizzly</code></td><td>grizzly, corsair, ice, mono, nord, light (installer <code>-Theme</code>)</td></tr>
     <tr><td><code>--wire-limit</code></td><td><code>10.5</code></td><td>Amps per wire treated as 100 %</td></tr>
     <tr><td><code>--total-limit</code></td><td><code>55</code></td><td>Amps total treated as 100 %</td></tr>
     <tr><td><code>--cable-w</code></td><td>cable's own rating</td><td>Cable rating in W</td></tr>

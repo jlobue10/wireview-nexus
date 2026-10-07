@@ -3,7 +3,7 @@
 # From anywhere (downloads the latest release into %LOCALAPPDATA%\wireview-nexus):
 #   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1 | iex"
 # With options:
-#   powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Layout per-wire"
+#   powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1))) -Layout per-wire -Theme ice"
 # Pin what gets installed. Fetch the bootstrap from the SAME tag, otherwise main's installer
 # runs before anything is verified:
 #   powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/v2.3.0/install.ps1))) -Ref v2.3.0 -Sha256 <hash from the release notes>"
@@ -12,7 +12,8 @@
 # executable next to it; -Ref/-Sha256 unused).
 # Remove:
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
-# Options: -Layout combined|per-wire|total-current|total-power, -ExtraArgs '--fps 4', -NoStart,
+# Options: -Layout combined|per-wire|total-current|total-power, -Theme grizzly|corsair|ice|mono|nord|light,
+#          -ExtraArgs '--fps 4', -NoStart,
 #          -Log [-LogDir <folder>] (CSV log of the readings, off by default)
 #
 # What it does: downloads wireview-nexus.exe (one self-contained file, nothing else to install),
@@ -21,6 +22,7 @@
 # the same folder is replaced.
 param(
     [ValidateSet('combined', 'per-wire', 'total-current', 'total-power')][string]$Layout = 'combined',
+    [ValidateSet('grizzly', 'corsair', 'ice', 'mono', 'nord', 'light')][string]$Theme = 'grizzly',
     [string]$ExtraArgs = '',
     [string]$Dir = '',
     [string]$Ref = '',
@@ -38,6 +40,7 @@ $Exe = 'wireview-nexus.exe'
 $TaskName = 'WireView Nexus'
 $Description = 'Shows Thermal Grizzly WireView Pro II readings on the iCUE Nexus'
 $BaseArgs = "--layout $Layout"
+if ($Theme -ne 'grizzly') { $BaseArgs += " --theme $Theme" }
 # What the Python releases (1.x) put in the install folder.
 $LegacyMain = 'nexus_wireview.py'
 $LegacyItems = @('venv', '__pycache__', 'nexus_wireview.py', 'wireview_source.py', 'wireview_serial.py', 'hwinfo_wireview.py',
@@ -213,6 +216,7 @@ Say 'Done.'
 Write-Host "  Installed in : $Dir"
 Write-Host "  Runs         : $exePath $daemonArgs"
 Write-Host "  Layout       : $Layout   (change: install.ps1 -Layout per-wire)"
+Write-Host "  Theme        : $Theme   (change: install.ps1 -Theme ice; grizzly, corsair, ice, mono, nord, light)"
 Write-Host '  Readings     : from a running wireview-xeneon-edge bridge if there is one, else straight from'
 Write-Host '                 the WireView over USB. Close the Thermal Grizzly WireView app (and disable its'
 Write-Host '                 auto-start) so the COM port is free. No HWiNFO needed.'

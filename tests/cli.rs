@@ -41,6 +41,7 @@ fn d1_limits_must_be_positive_and_finite() {
 fn other_arguments_are_checked() {
     for bad in [
         ["--layout", "sideways"],
+        ["--theme", "plaid"],
         ["--source", "usb"],
         ["--brightness", "101"],
         ["--brightness", "-1"],
