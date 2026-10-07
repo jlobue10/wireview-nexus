@@ -12,7 +12,7 @@
 # executable next to it; -Ref/-Sha256 unused).
 # Remove:
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
-# Options: -Layout combined|per-wire|total-current|total-power, -Theme grizzly|corsair|ice|mono|nord|light,
+# Options: -Layout combined|per-wire|total-current|total-power, -Theme <name> (see README, default grizzly),
 #          -ExtraArgs '--fps 4', -NoStart,
 #          -Log [-LogDir <folder>] (CSV log of the readings, off by default)
 #
@@ -22,7 +22,7 @@
 # the same folder is replaced.
 param(
     [ValidateSet('combined', 'per-wire', 'total-current', 'total-power')][string]$Layout = 'combined',
-    [ValidateSet('grizzly', 'corsair', 'ice', 'mono', 'nord', 'light')][string]$Theme = 'grizzly',
+    [ValidateSet('grizzly', 'corsair', 'ice', 'mono', 'nord', 'light', 'dracula', 'gruvbox', 'solarized', 'solarized-light', 'monokai', 'catppuccin', 'tokyo-night', 'one-dark', 'rose-pine', 'everforest', 'matrix', 'amber', 'cyberpunk', 'ocean', 'emerald', 'violet', 'sunset', 'slate', 'high-contrast')][string]$Theme = 'grizzly',
     [string]$ExtraArgs = '',
     [string]$Dir = '',
     [string]$Ref = '',
@@ -216,7 +216,7 @@ Say 'Done.'
 Write-Host "  Installed in : $Dir"
 Write-Host "  Runs         : $exePath $daemonArgs"
 Write-Host "  Layout       : $Layout   (change: install.ps1 -Layout per-wire)"
-Write-Host "  Theme        : $Theme   (change: install.ps1 -Theme ice; grizzly, corsair, ice, mono, nord, light)"
+Write-Host "  Theme        : $Theme   (change: install.ps1 -Theme ice; all names in the README)"
 Write-Host '  Readings     : from a running wireview-xeneon-edge bridge if there is one, else straight from'
 Write-Host '                 the WireView over USB. Close the Thermal Grizzly WireView app (and disable its'
 Write-Host '                 auto-start) so the COM port is free. No HWiNFO needed.'

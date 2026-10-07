@@ -132,7 +132,7 @@ fault masks. Reads take well under a millisecond.
 | Option | Default | Meaning |
 |---|---|---|
 | `--layout` | `combined` | `combined`, `per-wire`, `total-current`, `total-power` |
-| `--theme` | `grizzly` | Colour theme: `grizzly` (orange on black), `corsair` (yellow), `ice` (cyan), `mono` (greyscale), `nord`, `light` (dark text on light); installer `-Theme` |
+| `--theme` | `grizzly` | Colour theme, one of the names below; installer `-Theme` |
 | `--wire-limit` | `10.5` | Amps per wire treated as 100 % |
 | `--total-limit` | `55` | Amps total treated as 100 % |
 | `--cable-w` | cable's own rating | Cable rating in W (the WireView reports 600/450/300/150) |
@@ -145,10 +145,40 @@ fault masks. Reads take well under a millisecond.
 | `--csv-log DIR` | off | Also write the readings to a `log-<date>-<time>.csv` in `DIR` (see below) |
 | `--csv-interval` | `60` | Seconds between CSV rows, 1 to 86400 |
 
+### Themes
+
+| Theme | Look |
+|---|---|
+| `grizzly` | Thermal Grizzly orange on black (default) |
+| `corsair` | yellow accent, orange warnings |
+| `ice` | cyan accent |
+| `mono` | greyscale, alarms in colour |
+| `nord` | Nord frost blue on polar night |
+| `light` | dark text on a light background |
+| `dracula` | Dracula purple on dark |
+| `gruvbox` | Gruvbox dark, blue accent |
+| `solarized` | Solarized dark |
+| `solarized-light` | Solarized light |
+| `monokai` | Monokai cyan on dark |
+| `catppuccin` | Catppuccin Mocha mauve |
+| `tokyo-night` | Tokyo Night blue |
+| `one-dark` | Atom One Dark blue |
+| `rose-pine` | Rose Pine iris |
+| `everforest` | Everforest aqua on green-grey |
+| `matrix` | green phosphor on black |
+| `amber` | amber phosphor on black |
+| `cyberpunk` | magenta neon on midnight blue |
+| `ocean` | sky blue on deep navy |
+| `emerald` | green accent on black |
+| `violet` | purple accent on black |
+| `sunset` | pink accent on dark plum |
+| `slate` | grey-blue on slate |
+| `high-contrast` | yellow on black, maximum contrast |
+
 Themes only change colours; every theme keeps its warning and critical colours apart from
-the accent, and the text always says what a colour means. The Xeneon Edge widgets offer the
-same six palettes as `?theme=`, so both screens can match. Previews of every theme are on the
-[project page](https://jlobue10.github.io/wireview-nexus/).
+the accent and from the background (a test enforces it), and the text always says what a
+colour means. The Xeneon Edge widgets offer the same names as `?theme=`, so both screens can
+match. Previews of every theme are on the [project page](https://jlobue10.github.io/wireview-nexus/).
 
 Readings older than five seconds show as "Stale readings" instead of numbers. Bars turn to the
 warning colour at 80 % of a limit and to critical at 100 %, always with a text label. The `combined`,
