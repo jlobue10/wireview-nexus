@@ -115,13 +115,13 @@ impl Fonts {
         let regular = match load_first(&REGULAR) {
             Ok(f) => f,
             Err(why) if usable_font(EMBEDDED_REGULAR) => {
-                println!("fonts: {why}; using the embedded DejaVu Sans");
+                wireview_core::say!("fonts: {why}; using the embedded DejaVu Sans");
                 EMBEDDED_REGULAR.to_vec()
             }
             Err(e) => return Err(e),
         };
         let bold = load_first(&BOLD).unwrap_or_else(|why| {
-            println!("fonts: {why}; bold text uses the regular face");
+            wireview_core::say!("fonts: {why}; bold text uses the regular face");
             regular.clone()
         });
         Ok(Fonts { regular, bold })
