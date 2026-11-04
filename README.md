@@ -216,8 +216,8 @@ readings as JSON on localhost. Its `wireview-core` crate is the reader both prog
 
 ## Tests
 
-`cargo test` checks the frame packets, the layouts and the command line; no Nexus and no
-WireView needed (a system font is). After `cargo test`,
+`cargo test` checks the frame packets, the layouts and the command line; no Nexus, no WireView and no
+installed font needed (a fallback face is embedded). After `cargo test`,
 `pwsh -NoProfile -File tests/installer.test.ps1` checks installation and uninstallation in
 temporary directories with Windows administration and downloads mocked.
 

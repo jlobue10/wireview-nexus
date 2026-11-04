@@ -1,7 +1,9 @@
 //! System fonts and text drawing.
 //!
 //! The fonts are read from the system at start (Segoe UI on Windows, with
-//! Arial and DejaVu Sans as fallbacks), so none is shipped with the program.
+//! Arial and DejaVu Sans as fallbacks). As a last resort a DejaVu Sans face
+//! is embedded in the binary, so the daemon can always draw text - even on a
+//! machine with no usable font installed - instead of refusing to start.
 
 use std::path::{Path, PathBuf};
 
@@ -14,6 +16,11 @@ use crate::canvas::{Canvas, H, Rgb, W};
 const REGULAR: [&str; 3] = ["segoeui.ttf", "arial.ttf", "DejaVuSans.ttf"];
 const BOLD: [&str; 3] = ["segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"];
 const MAX_DEPTH: usize = 4;
+
+/// Last-resort face embedded in the binary (DejaVu Sans, Bitstream Vera
+/// licence, assets/FONT-LICENCE.txt: embedding and redistribution permitted).
+/// Covers the · and ° glyphs the layouts draw.
+const EMBEDDED_REGULAR: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Anchor {
@@ -102,10 +109,16 @@ pub struct Fonts {
 
 impl Fonts {
     pub fn load() -> Result<Self, String> {
-        Ok(Fonts {
-            regular: load_first(&REGULAR)?,
-            bold: load_first(&BOLD)?,
-        })
+        // System fonts first; the embedded face is only used when the machine
+        // has none of them. Bold degrades to the regular face rather than
+        // refusing to start - losing weight beats losing the display.
+        let regular = match load_first(&REGULAR) {
+            Ok(f) => f,
+            Err(_) if usable_font(EMBEDDED_REGULAR) => EMBEDDED_REGULAR.to_vec(),
+            Err(e) => return Err(e),
+        };
+        let bold = load_first(&BOLD).unwrap_or_else(|_| regular.clone());
+        Ok(Fonts { regular, bold })
     }
 
     /// The regular (or bold) face at `size` pixels per em.

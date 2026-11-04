@@ -193,6 +193,7 @@ fn main() -> ExitCode {
         args.layout, args.fps, args.source
     );
     let mut last_source: Option<String> = None;
+    let mut last_csv_warn: Option<Instant> = None;
     loop {
         let t0 = Instant::now();
         // A reader bug must not kill the daemon.
@@ -208,8 +209,13 @@ fn main() -> ExitCode {
         }
         if let Some(log) = csv_log.as_mut() {
             if let Err(e) = log.record(&data) {
-                println!("csv log: cannot write {}: {e}; logging stopped", log.path().display());
-                csv_log = None;
+                // One disk-full, removed folder or share violation must not
+                // end logging for the rest of the daemon's life: warn at most
+                // once a minute and retry on the next tick.
+                if last_csv_warn.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
+                    println!("csv log: cannot write {}: {e}; retrying", log.path().display());
+                    last_csv_warn = Some(Instant::now());
+                }
             }
         }
         let was_open = nexus.is_open();
@@ -225,12 +231,26 @@ fn main() -> ExitCode {
                 nexus.set_brightness(pct);
             }
         }
-        // Bad data must not kill it either.
-        let frame = catch_unwind(AssertUnwindSafe(|| renderer.render(&data))).unwrap_or_else(|p| {
-            let why = panic_text(p);
-            println!("render failed: {why}");
-            renderer.render(&Readings::problem("none", "Render error", &why))
-        });
+        // Bad data must not kill it either - and neither must a second panic
+        // inside the fallback render, which would unwind out of main. If the
+        // safe "Render error" page also panics, skip the frame instead.
+        let frame = match catch_unwind(AssertUnwindSafe(|| renderer.render(&data))) {
+            Ok(frame) => frame,
+            Err(p) => {
+                let why = panic_text(p);
+                println!("render failed: {why}");
+                match catch_unwind(AssertUnwindSafe(|| {
+                    renderer.render(&Readings::problem("none", "Render error", &why))
+                })) {
+                    Ok(frame) => frame,
+                    Err(_) => {
+                        println!("fallback render failed too; skipping frame");
+                        sleep(period.saturating_sub(t0.elapsed()));
+                        continue;
+                    }
+                }
+            }
+        };
         if let Err(e) = nexus.send_frame(frame.rgba()) {
             println!("write failed, reconnecting: {e}");
             nexus.close();

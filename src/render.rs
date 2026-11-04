@@ -126,7 +126,9 @@ fn fault_summary(data: &Readings) -> Option<String> {
             "over_current_wire" => "WIRE AMPS",
             "over_power" => "POWER",
             "imbalance" => "IMBALANCE",
-            _ => unreachable!("Faults only contains known keys"),
+            // An unknown key must degrade to showing the key itself, like
+            // fault_text does - not panic the daemon out of a footer row.
+            other => other,
         })
         .collect();
     (!names.is_empty()).then(|| format!("FAULT: {}", names.join(" · ")))
