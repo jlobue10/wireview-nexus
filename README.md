@@ -30,8 +30,8 @@ powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/jlo
 
 It downloads `wireview-nexus.exe` from the latest release to `%LOCALAPPDATA%\wireview-nexus`,
 checks its SHA-256, registers a per-user Scheduled Task named "WireView Nexus" that runs the
-daemon at logon (no admin rights needed), and starts it. A Python-based 1.x install in that
-folder is replaced. Then:
+daemon at logon and starts it again within five minutes should it ever exit (no admin rights
+needed), and starts it. A Python-based 1.x install in that folder is replaced. Then:
 
 1. **Close the Thermal Grizzly WireView app** and turn off its auto-start. Only one program
    can hold the WireView's USB serial port.
@@ -151,6 +151,13 @@ fault masks. Reads take well under a millisecond.
 | `--preview PNG` | | Render one frame to a file and exit (`--demo` for sample data) |
 | `--csv-log DIR` | off | Also write the readings to a `log-<date>-<time>.csv` in `DIR` (see below) |
 | `--csv-interval` | `60` | Seconds between CSV rows, 1 to 86400 |
+| `--watchdog` | `20` | Exit (for the task to restart) when a device read or panel write has not returned after this many seconds; `0` turns it off |
+
+Started by the Scheduled Task the daemon has no console, so its messages go to
+`%LOCALAPPDATA%\wireview\wireview-nexus.log` (each start adds a dated line; past 1 MiB the file
+moves to `.old.log`). If the panel goes blank, that file says whether the daemon exited and why;
+the task restarts an exited daemon within a minute, and the watchdog turns a stuck one into an
+exited one.
 
 ### Themes
 
