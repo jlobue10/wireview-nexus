@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use wireview_core::csvlog::{self, CsvLog};
-use wireview_core::{DEFAULT_BRIDGE_URL, Reader, Readings, Source};
+use wireview_core::{DEFAULT_BRIDGE_URL, Reader, Readings, Source, Watchdog, watchdog};
 
 use crate::canvas::{Canvas, H, W};
 use crate::fonts::Fonts;
@@ -123,6 +123,12 @@ struct Args {
     /// Seconds between CSV rows (1-86400)
     #[arg(long, value_name = "SECONDS", default_value = "60", value_parser = csvlog::parse_interval, requires = "csv_log")]
     csv_interval: Duration,
+
+    /// Exit (status 3, for the scheduled task to restart) when a device read
+    /// or a panel write has not returned after this many seconds; 0 turns
+    /// the watchdog off
+    #[arg(long, value_name = "SECONDS", default_value = "20", value_parser = watchdog::parse_limit)]
+    watchdog: Duration,
 }
 
 fn write_png(path: &Path, frame: &Canvas) -> Result<(), String> {
@@ -150,7 +156,7 @@ fn main() -> ExitCode {
     let fonts = match Fonts::load() {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("{e}");
+            wireview_core::say_err!("{e}");
             return ExitCode::FAILURE;
         }
     };
@@ -161,11 +167,11 @@ fn main() -> ExitCode {
         let data = if args.demo { demo_data() } else { reader.read() };
         return match write_png(path, &renderer.render(&data)) {
             Ok(()) => {
-                println!("wrote {}", path.display());
+                wireview_core::say!("wrote {}", path.display());
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("cannot write {}: {e}", path.display());
+                wireview_core::say_err!("cannot write {}: {e}", path.display());
                 ExitCode::FAILURE
             }
         };
@@ -175,11 +181,11 @@ fn main() -> ExitCode {
         None => None,
         Some(dir) => match CsvLog::create(dir, args.csv_interval) {
             Ok(log) => {
-                println!("CSV log: {} (a row every {} s)", log.path().display(), log.interval().as_secs());
+                wireview_core::say!("CSV log: {} (a row every {} s)", log.path().display(), log.interval().as_secs());
                 Some(log)
             }
             Err(e) => {
-                eprintln!("--csv-log {}: cannot create the log file: {e}", dir.display());
+                wireview_core::say_err!("--csv-log {}: cannot create the log file: {e}", dir.display());
                 return ExitCode::from(2);
             }
         },
@@ -188,23 +194,35 @@ fn main() -> ExitCode {
     let mut nexus = Nexus::default();
     let period = Duration::from_secs_f64(1.0 / args.fps);
     let mut backoff = 1.0_f64;
-    println!(
+    // A serial read or HID write that never returns leaves a live process
+    // that paints nothing, which no task restart notices: the watchdog ends
+    // it so the scheduled task starts a fresh one.
+    let watchdog = (!args.watchdog.is_zero()).then(|| Watchdog::start(args.watchdog));
+    let watched = |what: &'static str| watchdog.as_ref().map(|w| w.watch(what));
+    wireview_core::say!(
         "WireView -> Nexus {VERSION}, layout={}, {} fps, source={}. Ctrl+C to stop.",
-        args.layout, args.fps, args.source
+        args.layout,
+        args.fps,
+        args.source
     );
     let mut last_source: Option<String> = None;
     let mut last_csv_warn: Option<Instant> = None;
     loop {
         let t0 = Instant::now();
+        // Keeps the headless log file from growing without bound.
+        wireview_core::console::maintain();
         // A reader bug must not kill the daemon.
-        let data = catch_unwind(AssertUnwindSafe(|| reader.read())).unwrap_or_else(|p| {
-            let why = panic_text(p);
-            println!("read failed: {why}");
-            Readings::problem(args.source.as_str(), "Reader error", &why)
-        });
+        let data = {
+            let _watched = watched("device read");
+            catch_unwind(AssertUnwindSafe(|| reader.read())).unwrap_or_else(|p| {
+                let why = panic_text(p);
+                wireview_core::say!("read failed: {why}");
+                Readings::problem(args.source.as_str(), "Reader error", &why)
+            })
+        };
         let src = data.describe_source();
         if last_source.as_deref() != Some(&src) {
-            println!("readings: {src}");
+            wireview_core::say!("readings: {src}");
             last_source = Some(src);
         }
         if let Some(log) = csv_log.as_mut() {
@@ -213,14 +231,18 @@ fn main() -> ExitCode {
                 // end logging for the rest of the daemon's life: warn at most
                 // once a minute and retry on the next tick.
                 if last_csv_warn.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
-                    println!("csv log: cannot write {}: {e}; retrying", log.path().display());
+                    wireview_core::say!("csv log: cannot write {}: {e}; retrying", log.path().display());
                     last_csv_warn = Some(Instant::now());
                 }
             }
         }
         let was_open = nexus.is_open();
-        if !nexus.open() {
-            println!("Nexus not found, retrying...");
+        let opened = {
+            let _watched = watched("Nexus open");
+            nexus.open()
+        };
+        if !opened {
+            wireview_core::say!("Nexus not found, retrying...");
             sleep(Duration::from_secs_f64(backoff.min(10.0)));
             backoff *= 2.0;
             continue;
@@ -238,21 +260,25 @@ fn main() -> ExitCode {
             Ok(frame) => frame,
             Err(p) => {
                 let why = panic_text(p);
-                println!("render failed: {why}");
+                wireview_core::say!("render failed: {why}");
                 match catch_unwind(AssertUnwindSafe(|| {
                     renderer.render(&Readings::problem("none", "Render error", &why))
                 })) {
                     Ok(frame) => frame,
                     Err(_) => {
-                        println!("fallback render failed too; skipping frame");
+                        wireview_core::say!("fallback render failed too; skipping frame");
                         sleep(period.saturating_sub(t0.elapsed()));
                         continue;
                     }
                 }
             }
         };
-        if let Err(e) = nexus.send_frame(frame.rgba()) {
-            println!("write failed, reconnecting: {e}");
+        let sent = {
+            let _watched = watched("Nexus write");
+            nexus.send_frame(frame.rgba())
+        };
+        if let Err(e) = sent {
+            wireview_core::say!("write failed, reconnecting: {e}");
             nexus.close();
             sleep(Duration::from_secs(2));
             continue;
