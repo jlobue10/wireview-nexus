@@ -48,12 +48,18 @@ Re-running the installer updates the executable and restarts the daemon. It leav
 itself next to the executable, so `%LOCALAPPDATA%\wireview-nexus\install.ps1 -Uninstall` removes
 the executable and installer while preserving any files you added.
 
-**To use the official Thermal Grizzly WireView app or update the WireView firmware**, stop the
-daemon first: open Task Scheduler, select "WireView Nexus" and choose **End** (or run
-`Stop-ScheduledTask -TaskName 'WireView Nexus'` in PowerShell). The daemon holds the WireView's
-USB serial port, so until it is stopped the official app shows no data and a firmware update
-cannot talk to the device. Afterwards, **Run** the task again in Task Scheduler (or
-`Start-ScheduledTask -TaskName 'WireView Nexus'`); it also comes back on its own at the next logon.
+**To use the official Thermal Grizzly WireView app or update the WireView firmware**, take the
+task out of the way first: open Task Scheduler, select "WireView Nexus", choose **Disable** and
+then **End**, or in PowerShell:
+
+```
+Disable-ScheduledTask -TaskName 'WireView Nexus'; Stop-ScheduledTask -TaskName 'WireView Nexus'
+```
+
+Ending it alone is not enough: the task starts the daemon again within five minutes. The daemon
+holds the WireView's USB serial port, so until it is stopped the official app shows no data and a
+firmware update cannot talk to the device. Afterwards **Enable** the task and **Run** it (or
+`Enable-ScheduledTask -TaskName 'WireView Nexus'; Start-ScheduledTask -TaskName 'WireView Nexus'`).
 
 For an older custom install without an ownership marker, pass `-Uninstall -Dir <install folder>`.
 In-place source or manually downloaded folders keep their files when no `-Dir` is given.
@@ -85,7 +91,8 @@ gh attestation verify wireview-nexus.exe --repo jlobue10/wireview-nexus   # opti
 powershell -ExecutionPolicy Bypass -File install.ps1 -Layout combined
 ```
 
-`-NoStart` registers without starting. `-Log` also writes the readings to a CSV log (off by
+`-NoStart` registers without starting the daemon right away (the task still starts it at the next
+logon or within five minutes). `-Log` also writes the readings to a CSV log (off by
 default; see [CSV log](#csv-log)), in `logs\` under the install folder unless `-LogDir <folder>`
 says otherwise.
 
