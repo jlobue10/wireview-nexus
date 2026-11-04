@@ -32,8 +32,15 @@ jobs:
         env:
           REF: ${{ github.head_ref || github.ref_name }}
         run: |
-          git clone --depth 1 --branch "$REF" https://github.com/jlobue10/wireview-xeneon-edge ||
+          if git ls-remote --exit-code --heads --tags https://github.com/jlobue10/wireview-xeneon-edge "$REF" >/dev/null; then
+            git clone --depth 1 --branch "$REF" https://github.com/jlobue10/wireview-xeneon-edge
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "::error::release tag $REF has no matching ref in wireview-xeneon-edge"
+            exit 1
+          else
+            echo "::warning::no $REF in wireview-xeneon-edge; building against its main branch"
             git clone --depth 1 https://github.com/jlobue10/wireview-xeneon-edge
+          fi
       - name: Fonts for the render tests
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core
