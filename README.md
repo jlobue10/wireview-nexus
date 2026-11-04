@@ -17,8 +17,9 @@ reverse-engineered by [nexus-open](https://github.com/mantonx/nexus-open). Readi
 changes.
 
 The daemon is a single executable, `wireview-nexus.exe`, written in Rust; it needs no runtime.
-Text is drawn with the fonts already on the PC (Segoe UI). (Releases up to 1.0.1 were Python;
-the options are unchanged.)
+Text is drawn with the fonts already on the PC (Segoe UI, else Arial or DejaVu Sans); a copy of
+DejaVu Sans is built in for a PC that has none of them. (Releases up to 1.0.1 were Python; the
+options are unchanged.)
 
 ## Install
 
@@ -235,4 +236,6 @@ in [AUDIT-2026-09-30.md](AUDIT-2026-09-30.md).
 
 MIT. Nexus protocol details from nexus-open (MIT); WireView serial protocol details from
 wireview-pro-ii and wireview-hwmon (MIT). The executable includes the Rust crates listed in
-`Cargo.lock` under their own licenses (MIT, Apache-2.0, and MPL-2.0 for `serialport`).
+`Cargo.lock` under their own licenses (MIT, Apache-2.0, and MPL-2.0 for `serialport`) and a copy
+of the DejaVu Sans typeface (Bitstream Vera licence, [assets/FONT-LICENCE.txt](assets/FONT-LICENCE.txt),
+shipped with every release as `FONT-LICENCE.txt`).

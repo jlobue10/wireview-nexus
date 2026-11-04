@@ -114,10 +114,16 @@ impl Fonts {
         // refusing to start - losing weight beats losing the display.
         let regular = match load_first(&REGULAR) {
             Ok(f) => f,
-            Err(_) if usable_font(EMBEDDED_REGULAR) => EMBEDDED_REGULAR.to_vec(),
+            Err(why) if usable_font(EMBEDDED_REGULAR) => {
+                println!("fonts: {why}; using the embedded DejaVu Sans");
+                EMBEDDED_REGULAR.to_vec()
+            }
             Err(e) => return Err(e),
         };
-        let bold = load_first(&BOLD).unwrap_or_else(|_| regular.clone());
+        let bold = load_first(&BOLD).unwrap_or_else(|why| {
+            println!("fonts: {why}; bold text uses the regular face");
+            regular.clone()
+        });
         Ok(Fonts { regular, bold })
     }
 
@@ -251,6 +257,23 @@ mod tests {
     fn invalid_fonts_are_rejected() {
         assert!(!usable_font(&[]));
         assert!(!usable_font(b"not an OpenType font"));
+    }
+
+    #[test]
+    fn the_embedded_face_is_usable_and_draws_the_special_glyphs() {
+        // Both CI machines have system fonts, so a corrupt or swapped
+        // assets/DejaVuSans.ttf would only ever fail on the machine that
+        // needs it. Check it here, with the glyphs the layouts draw.
+        assert!(usable_font(EMBEDDED_REGULAR));
+        let fonts = Fonts {
+            regular: EMBEDDED_REGULAR.to_vec(),
+            bold: EMBEDDED_REGULAR.to_vec(),
+        };
+        let face = fonts.face(17.0, false);
+        let mut canvas = Canvas::new([0, 0, 0]);
+        face.draw(&mut canvas, 8, 4, "12.80 A · 35.8°C", [255, 255, 255], Anchor::Left);
+        assert!(canvas.rgba().chunks_exact(4).any(|p| p[0] > 0));
+        assert!(face.width("·") > 0 && face.width("°") > 0);
     }
 
     #[test]
