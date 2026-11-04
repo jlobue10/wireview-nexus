@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use wireview_core::csvlog::{self, CsvLog};
-use wireview_core::{DEFAULT_BRIDGE_URL, Reader, Readings, Source};
+use wireview_core::{DEFAULT_BRIDGE_URL, Reader, Readings, Source, Watchdog, watchdog};
 
 use crate::canvas::{Canvas, H, W};
 use crate::fonts::Fonts;
@@ -123,6 +123,12 @@ struct Args {
     /// Seconds between CSV rows (1-86400)
     #[arg(long, value_name = "SECONDS", default_value = "60", value_parser = csvlog::parse_interval, requires = "csv_log")]
     csv_interval: Duration,
+
+    /// Exit (status 3, for the scheduled task to restart) when a device read
+    /// or a panel write has not returned after this many seconds; 0 turns
+    /// the watchdog off
+    #[arg(long, value_name = "SECONDS", default_value = "20", value_parser = watchdog::parse_limit)]
+    watchdog: Duration,
 }
 
 fn write_png(path: &Path, frame: &Canvas) -> Result<(), String> {
@@ -188,6 +194,11 @@ fn main() -> ExitCode {
     let mut nexus = Nexus::default();
     let period = Duration::from_secs_f64(1.0 / args.fps);
     let mut backoff = 1.0_f64;
+    // A serial read or HID write that never returns leaves a live process
+    // that paints nothing, which no task restart notices: the watchdog ends
+    // it so the scheduled task starts a fresh one.
+    let watchdog = (!args.watchdog.is_zero()).then(|| Watchdog::start(args.watchdog));
+    let watched = |what: &'static str| watchdog.as_ref().map(|w| w.watch(what));
     println!(
         "WireView -> Nexus {VERSION}, layout={}, {} fps, source={}. Ctrl+C to stop.",
         args.layout, args.fps, args.source
@@ -197,11 +208,14 @@ fn main() -> ExitCode {
     loop {
         let t0 = Instant::now();
         // A reader bug must not kill the daemon.
-        let data = catch_unwind(AssertUnwindSafe(|| reader.read())).unwrap_or_else(|p| {
-            let why = panic_text(p);
-            println!("read failed: {why}");
-            Readings::problem(args.source.as_str(), "Reader error", &why)
-        });
+        let data = {
+            let _watched = watched("device read");
+            catch_unwind(AssertUnwindSafe(|| reader.read())).unwrap_or_else(|p| {
+                let why = panic_text(p);
+                println!("read failed: {why}");
+                Readings::problem(args.source.as_str(), "Reader error", &why)
+            })
+        };
         let src = data.describe_source();
         if last_source.as_deref() != Some(&src) {
             println!("readings: {src}");
@@ -219,7 +233,11 @@ fn main() -> ExitCode {
             }
         }
         let was_open = nexus.is_open();
-        if !nexus.open() {
+        let opened = {
+            let _watched = watched("Nexus open");
+            nexus.open()
+        };
+        if !opened {
             println!("Nexus not found, retrying...");
             sleep(Duration::from_secs_f64(backoff.min(10.0)));
             backoff *= 2.0;
@@ -251,7 +269,11 @@ fn main() -> ExitCode {
                 }
             }
         };
-        if let Err(e) = nexus.send_frame(frame.rgba()) {
+        let sent = {
+            let _watched = watched("Nexus write");
+            nexus.send_frame(frame.rgba())
+        };
+        if let Err(e) = sent {
             println!("write failed, reconnecting: {e}");
             nexus.close();
             sleep(Duration::from_secs(2));
