@@ -44,7 +44,8 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory dist | Out-Null
-          Copy-Item target/release/wireview-nexus.exe, install.ps1 dist/
+          # The executable embeds DejaVu Sans; its licence travels with every copy.
+          Copy-Item target/release/wireview-nexus.exe, install.ps1, assets/FONT-LICENCE.txt dist/
           $hash = (Get-FileHash dist/wireview-nexus.exe -Algorithm SHA256).Hash.ToLower()
           [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS", "$hash  wireview-nexus.exe`n")
           $tick = [char]96
