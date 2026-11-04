@@ -156,8 +156,8 @@ fault masks. Reads take well under a millisecond.
 Started by the Scheduled Task the daemon has no console, so its messages go to
 `%LOCALAPPDATA%\wireview\wireview-nexus.log` (each start adds a dated line; past 1 MiB the file
 moves to `.old.log`). If the panel goes blank, that file says whether the daemon exited and why;
-the task restarts an exited daemon within a minute, and the watchdog turns a stuck one into an
-exited one.
+the task starts an exited daemon again (within a minute after a failure exit, within five
+minutes otherwise), and the watchdog turns a stuck one into an exited one.
 
 ### Themes
 
