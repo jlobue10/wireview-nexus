@@ -32,11 +32,10 @@ jobs:
         env:
           REF: ${{ github.head_ref || github.ref_name }}
         run: |
-          if git ls-remote --exit-code --heads --tags https://github.com/jlobue10/wireview-xeneon-edge "$REF" >/dev/null; then
+          # Exact refs: a bare pattern would also match refs/heads/feature/<REF>. Release
+          # tags are checked by release.yml, whose clone of the same tag fails on its own.
+          if git ls-remote --exit-code https://github.com/jlobue10/wireview-xeneon-edge "refs/heads/$REF" "refs/tags/$REF" >/dev/null; then
             git clone --depth 1 --branch "$REF" https://github.com/jlobue10/wireview-xeneon-edge
-          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = tag ]; then
-            echo "::error::release tag $REF has no matching ref in wireview-xeneon-edge"
-            exit 1
           else
             echo "::warning::no $REF in wireview-xeneon-edge; building against its main branch"
             git clone --depth 1 https://github.com/jlobue10/wireview-xeneon-edge
