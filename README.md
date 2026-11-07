@@ -100,7 +100,8 @@ says otherwise.
 <details>
 <summary>Build from source</summary>
 
-With [Rust](https://rustup.rs) installed. The shared reader is the `wireview-core` crate of the
+With [Rust](https://rustup.rs) 1.88 or newer installed (the locked `sha2` and the patched
+`ctutils` need it). The shared reader is the `wireview-core` crate of the
 companion repository, so clone both side by side:
 
 ```
@@ -151,21 +152,46 @@ fault masks. Reads take well under a millisecond.
 | `--wire-limit` | `10.5` | Amps per wire treated as 100 % |
 | `--total-limit` | `55` | Amps total treated as 100 % |
 | `--cable-w` | cable's own rating | Cable rating in W (the WireView reports 600/450/300/150) |
-| `--fps` | `2` | Frames per second, from 0.2 to 60 |
-| `--brightness` | | Panel backlight 0–100, set each time the panel is opened |
+| `--fps` | `2` | Sensor/readout ticks per second, from 0.2 to 60 |
+| `--always-refresh` | off | Send every tick, including identical frames; otherwise unchanged screens refresh every 2 seconds |
+| `--brightness` | | Panel backlight 0–100, applied on open unless a previous brightness attempt failed |
+| `--reset-brightness-guard` | off | Clear the brightness failure guard and exit; stop the daemon first |
 | `--source` | `auto` | `auto`, `bridge`, `serial`, `hwinfo` |
 | `--serial-port` | auto-detect | COM port of the WireView |
 | `--bridge-url` | `http://localhost:8765/api/wireview` | Bridge to ask in `auto`/`bridge` mode |
 | `--preview PNG` | | Render one frame to a file and exit (`--demo` for sample data) |
 | `--csv-log DIR` | off | Also write the readings to a `log-<date>-<time>.csv` in `DIR` (see below) |
 | `--csv-interval` | `60` | Seconds between CSV rows, 1 to 86400 |
-| `--watchdog` | `20` | Exit (for the task to restart) when a device read or panel write has not returned after this many seconds; `0` turns it off |
+| `--watchdog` | `20` | Exit (for the task to restart) when a device read, panel write or brightness report has not returned after this many seconds; `0` turns it off |
 
 Started by the Scheduled Task the daemon has no console, so its messages go to
 `%LOCALAPPDATA%\wireview\wireview-nexus.log` (each start adds a dated line; past 1 MiB the file
-moves to `.old.log`). If the panel goes blank, that file says whether the daemon exited and why;
-the task starts an exited daemon again (within a minute after a failure exit, within five
-minutes otherwise), and the watchdog turns a stuck one into an exited one.
+moves to `.old.log` and the daemon continues in a fresh file, closing its handle on the old one
+so `.old.log` can be deleted while the daemon runs). If the panel goes blank, that file says
+whether the daemon exited and why; the task starts an exited daemon again (within a minute
+after a failure exit, within five minutes otherwise), and the watchdog turns a stuck one into
+an exited one.
+
+### Brightness failure guard
+
+Brightness is optional: a rejected or incomplete brightness report logs one warning and
+leaves frame updates running at the panel's current brightness. It does not close the
+panel, delay rendering, or retry brightness on subsequent reconnects.
+
+Before calling the driver, the daemon creates
+`%LOCALAPPDATA%\wireview\wireview-nexus-brightness.guard` and removes it only after success.
+If the call hangs, the watchdog exits as before, but the restarted daemon sees the guard
+and skips brightness instead of repeating the hang. An ordinary error also keeps the
+guard across restarts. If the guard cannot be created, brightness is skipped safely.
+On non-Windows systems the guard lives under `$XDG_STATE_HOME/wireview` or
+`$HOME/.local/state/wireview`.
+
+To deliberately retry after resolving the problem, disable and stop the scheduled task,
+run `wireview-nexus.exe --reset-brightness-guard`, then re-enable/start the task. The reset
+command exits without opening either device; do not add it to the task's persistent
+arguments. Changing the brightness value alone does not bypass the guard. With
+`--watchdog 0`, the automatic exit for a hung driver call is disabled; the persisted guard
+still protects the next run after you stop the stuck process.
 
 ### Themes
 
@@ -207,6 +233,17 @@ warning colour at 80 % of a limit and to critical at 100 %, always with a text l
 `total-current` and `total-power` layouts also show the connector's own in and out temperatures
 in °C. Device fault flags (over-current, over-power, over-temperature, imbalance) are listed in
 red on the bottom row.
+
+## Resource usage
+
+Sensor polling and stale-reading checks run at `--fps`. Unchanged display data reuses the
+previous frame; changed data redraws into the same pixel buffer with a bounded 256 KiB
+glyph-mask cache, and USB packets are streamed from a single packet buffer. Identical frames
+are sent at least every two seconds (or on the next tick at lower frame rates), so a
+disconnect or a lost display is still noticed and repainted within that time. Reconnecting
+always sends a full frame. Use `--always-refresh` if your panel or another program needs the
+previous every-tick writes. Physical-panel coexistence and reconnect behaviour still need
+hardware validation.
 
 ## CSV log
 

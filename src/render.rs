@@ -163,8 +163,59 @@ pub struct Renderer {
     fonts: Fonts,
 }
 
-struct Pen<'a> {
+/// One reusable frame and the readings that produced it. Time/source metadata
+/// alone must not redraw the screen, but status, faults and cable rating must.
+/// Used with one fixed Renderer for the lifetime of the daemon.
+pub struct FrameCache {
     canvas: Canvas,
+    data: Option<Readings>,
+}
+
+impl Default for FrameCache {
+    fn default() -> Self {
+        Self {
+            canvas: Canvas::new([0; 3]),
+            data: None,
+        }
+    }
+}
+
+fn same_display(a: &Readings, b: &Readings) -> bool {
+    if a.ok != b.ok {
+        return false;
+    }
+    if !a.ok {
+        return a.status == b.status && a.hint == b.hint;
+    }
+    a.pins == b.pins
+        && a.total_current == b.total_current
+        && a.total_power == b.total_power
+        && a.avg_voltage == b.avg_voltage
+        && a.temp_in == b.temp_in
+        && a.temp_out == b.temp_out
+        && a.cable_w == b.cable_w
+        && a.faults == b.faults
+}
+
+impl FrameCache {
+    pub fn update(&mut self, renderer: &mut Renderer, data: &Readings) -> bool {
+        if self.data.as_ref().is_some_and(|old| same_display(old, data)) {
+            return false;
+        }
+        // If drawing panics, the partially painted canvas cannot be reused.
+        self.data = None;
+        renderer.render_into(data, &mut self.canvas);
+        self.data = Some(data.clone());
+        true
+    }
+
+    pub fn canvas(&self) -> &Canvas {
+        &self.canvas
+    }
+}
+
+struct Pen<'a> {
+    canvas: &'a mut Canvas,
     theme: Theme,
     big: Face<'a>,
     mid: Face<'a>,
@@ -174,11 +225,11 @@ struct Pen<'a> {
 
 impl Pen<'_> {
     fn text(&mut self, x: i32, y: i32, s: &str, face: Face<'_>, color: Rgb) {
-        face.draw(&mut self.canvas, x, y, s, color, Anchor::Left);
+        face.draw(self.canvas, x, y, s, color, Anchor::Left);
     }
 
     fn text_right(&mut self, x: i32, y: i32, s: &str, face: Face<'_>, color: Rgb) {
-        face.draw(&mut self.canvas, x, y, s, color, Anchor::Right);
+        face.draw(self.canvas, x, y, s, color, Anchor::Right);
     }
 
     fn hbar(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, ratio: f64, color: Rgb) {
@@ -215,13 +266,21 @@ impl Renderer {
     }
 
     pub fn render(&mut self, data: &Readings) -> Canvas {
-        if self.cable_w_auto && data.ok {
-            if let Some(w) = data.cable_w {
-                self.cable_w = f64::from(w);
-            }
+        let mut canvas = Canvas::new(self.theme.surface);
+        self.render_into(data, &mut canvas);
+        canvas
+    }
+
+    fn render_into(&mut self, data: &Readings, canvas: &mut Canvas) {
+        canvas.clear(self.theme.surface);
+        if self.cable_w_auto
+            && data.ok
+            && let Some(w) = data.cable_w
+        {
+            self.cable_w = f64::from(w);
         }
         let mut pen = Pen {
-            canvas: Canvas::new(self.theme.surface),
+            canvas,
             theme: self.theme,
             big: self.fonts.face(30.0, true),
             mid: self.fonts.face(17.0, true),
@@ -239,7 +298,7 @@ impl Renderer {
                 self.theme.ink2,
             );
             pen.text_right(632, 30, data.hint.as_deref().unwrap_or_default(), small, self.theme.ink3);
-            return pen.canvas;
+            return;
         }
         match self.layout {
             Layout::Combined => self.combined(&mut pen, data),
@@ -253,7 +312,6 @@ impl Renderer {
             let tiny = pen.tiny;
             pen.text(6, 36, &summary, tiny, self.theme.crit);
         }
-        pen.canvas
     }
 
     fn combined(&self, pen: &mut Pen<'_>, data: &Readings) {
@@ -320,10 +378,8 @@ impl Renderer {
                 self.theme.level(severity)
             },
         );
-        if !has_fault {
-            if let Some(v) = data.avg_voltage {
-                pen.text_right(634, 35, &format!("{v:.2} V"), tiny, self.theme.ink3);
-            }
+        if !has_fault && let Some(v) = data.avg_voltage {
+            pen.text_right(634, 35, &format!("{v:.2} V"), tiny, self.theme.ink3);
         }
     }
 
@@ -361,10 +417,8 @@ impl Renderer {
             pen.text(x + 18, -3, &amps, mid, self.theme.ink);
             pen.text(x + 18 + mid.width(&amps) + 2, 2, "A", tiny, self.theme.ink2);
             pen.hbar(x, 22, x + 92, 32, ratio(pin.current, self.wire_limit) * 0.8, self.theme.level(lv));
-            if !has_fault {
-                if let Some(p) = pin.power {
-                    pen.text(x, 34, &format!("{p:.0} W"), tiny, self.theme.ink3);
-                }
+            if !has_fault && let Some(p) = pin.power {
+                pen.text(x, 34, &format!("{p:.0} W"), tiny, self.theme.ink3);
             }
             x += 104;
         }
@@ -783,5 +837,34 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn cached_frames_ignore_timestamps_but_update_readings_faults_and_status() {
+        let mut renderer = renderer(Layout::Combined, 10.5);
+        let mut cache = FrameCache::default();
+        let mut data = demo_data();
+        assert!(cache.update(&mut renderer, &data));
+        let pixels = cache.canvas().rgba().as_ptr();
+        data.poll_time = Some(1000.0);
+        data.age_s = Some(0.5);
+        data.served_at = Some(1000.1);
+        data.source = "bridge".into();
+        assert!(!cache.update(&mut renderer, &data));
+        data.total_current = Some(56.0);
+        assert!(cache.update(&mut renderer, &data));
+        assert_eq!(cache.canvas().rgba(), renderer.render(&data).rgba());
+        data.faults = wireview_core::Faults::from_mask(1);
+        assert!(cache.update(&mut renderer, &data));
+        assert_eq!(cache.canvas().rgba(), renderer.render(&data).rgba());
+        data.cable_w = Some(150);
+        assert!(cache.update(&mut renderer, &data));
+        let mut offline = Readings::problem("bridge", "Stale readings", "source stopped updating");
+        assert!(cache.update(&mut renderer, &offline));
+        assert!(!cache.update(&mut renderer, &offline));
+        offline.hint = Some("bridge stopped updating".into());
+        assert!(cache.update(&mut renderer, &offline));
+        assert_eq!(cache.canvas().rgba(), renderer.render(&offline).rgba());
+        assert!(cache.update(&mut renderer, &data));
+        assert_eq!(cache.canvas().rgba().as_ptr(), pixels, "pixel storage was reallocated");
     }
 }

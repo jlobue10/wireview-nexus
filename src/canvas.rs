@@ -19,13 +19,20 @@ impl Canvas {
         Canvas { px }
     }
 
+    /// Reset an existing frame without allocating another pixel buffer.
+    pub fn clear(&mut self, fill: Rgb) {
+        for px in self.px.as_chunks_mut::<4>().0 {
+            px.copy_from_slice(&[fill[0], fill[1], fill[2], 255]);
+        }
+    }
+
     /// RGBA bytes, row by row.
     pub fn rgba(&self) -> &[u8] {
         &self.px
     }
 
     pub fn rgb(&self) -> Vec<u8> {
-        self.px.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect()
+        self.px.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect()
     }
 
     #[cfg(test)]
@@ -116,7 +123,7 @@ mod tests {
     fn frame_is_opaque_rgba() {
         let c = Canvas::new([1, 2, 3]);
         assert_eq!(c.rgba().len(), W * H * 4);
-        assert!(c.rgba().chunks_exact(4).all(|p| p == [1, 2, 3, 255]));
+        assert!(c.rgba().as_chunks::<4>().0.iter().all(|p| *p == [1, 2, 3, 255]));
         assert_eq!(c.rgb().len(), W * H * 3);
     }
 
