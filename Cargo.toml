@@ -2,7 +2,7 @@
 name = "wireview-nexus"
 version = "2.6.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/jlobue10/wireview-nexus"
 description = "Thermal Grizzly WireView Pro II readings on a Corsair iCUE Nexus"

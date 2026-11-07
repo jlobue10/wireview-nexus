@@ -151,7 +151,8 @@ fault masks. Reads take well under a millisecond.
 | `--wire-limit` | `10.5` | Amps per wire treated as 100 % |
 | `--total-limit` | `55` | Amps total treated as 100 % |
 | `--cable-w` | cable's own rating | Cable rating in W (the WireView reports 600/450/300/150) |
-| `--fps` | `2` | Frames per second, from 0.2 to 60 |
+| `--fps` | `2` | Sensor/readout ticks per second, from 0.2 to 60 |
+| `--always-refresh` | off | Send every tick, including identical frames; otherwise unchanged screens refresh every 2 seconds |
 | `--brightness` | | Panel backlight 0–100, set each time the panel is opened |
 | `--source` | `auto` | `auto`, `bridge`, `serial`, `hwinfo` |
 | `--serial-port` | auto-detect | COM port of the WireView |
@@ -159,7 +160,7 @@ fault masks. Reads take well under a millisecond.
 | `--preview PNG` | | Render one frame to a file and exit (`--demo` for sample data) |
 | `--csv-log DIR` | off | Also write the readings to a `log-<date>-<time>.csv` in `DIR` (see below) |
 | `--csv-interval` | `60` | Seconds between CSV rows, 1 to 86400 |
-| `--watchdog` | `20` | Exit (for the task to restart) when a device read or panel write has not returned after this many seconds; `0` turns it off |
+| `--watchdog` | `20` | Exit (for the task to restart) when a device read, panel write or brightness report has not returned after this many seconds; `0` turns it off |
 
 Started by the Scheduled Task the daemon has no console, so its messages go to
 `%LOCALAPPDATA%\wireview\wireview-nexus.log` (each start adds a dated line; past 1 MiB the file
@@ -246,3 +247,15 @@ wireview-pro-ii and wireview-hwmon (MIT). The executable includes the Rust crate
 `Cargo.lock` under their own licenses (MIT, Apache-2.0, and MPL-2.0 for `serialport`) and a copy
 of the DejaVu Sans typeface (Bitstream Vera licence, [assets/FONT-LICENCE.txt](assets/FONT-LICENCE.txt),
 shipped with every release as `FONT-LICENCE.txt`).
+
+### Resource usage
+
+Sensor polling and stale-reading checks continue at `--fps`. Unchanged display data reuses
+the previous frame; changed data redraws into the same pixel buffer with a bounded 256 KiB
+glyph-mask cache. USB packets are streamed from a single packet buffer. Identical frames
+are sent at least every two seconds (or the next tick at lower frame rates), so disconnects
+and a lost display are still detected/repainted. Reconnecting always sends a full frame.
+Use `--always-refresh` if your panel or another program needs the previous every-tick
+write behaviour. Physical-panel coexistence and reconnect behaviour still need validation.
+
+Source builds require Rust 1.88 or newer, including the patched `ctutils` dependency.

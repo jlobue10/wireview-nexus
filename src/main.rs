@@ -29,7 +29,7 @@ use wireview_core::{DEFAULT_BRIDGE_URL, Reader, Readings, Source, Watchdog, watc
 use crate::canvas::{Canvas, H, W};
 use crate::fonts::Fonts;
 use crate::nexus::Nexus;
-use crate::render::{Layout, Renderer, demo_data};
+use crate::render::{FrameCache, Layout, Renderer, demo_data};
 use crate::theme::Theme;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -90,6 +90,10 @@ struct Args {
     /// Frames per second (0.2-60)
     #[arg(long, value_parser = frame_rate, default_value = "2", allow_negative_numbers = true)]
     fps: f64,
+
+    /// Send every frame, even unchanged ones (default: unchanged screens refresh every 2 s)
+    #[arg(long)]
+    always_refresh: bool,
 
     /// Panel backlight 0-100, set when the panel is opened
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
@@ -192,6 +196,7 @@ fn main() -> ExitCode {
     };
 
     let mut nexus = Nexus::default();
+    let mut frames = FrameCache::default();
     let period = Duration::from_secs_f64(1.0 / args.fps);
     let mut backoff = 1.0_f64;
     // A serial read or HID write that never returns leaves a live process
@@ -225,15 +230,15 @@ fn main() -> ExitCode {
             wireview_core::say!("readings: {src}");
             last_source = Some(src);
         }
-        if let Some(log) = csv_log.as_mut() {
-            if let Err(e) = log.record(&data) {
-                // One disk-full, removed folder or share violation must not
-                // end logging for the rest of the daemon's life: warn at most
-                // once a minute and retry on the next tick.
-                if last_csv_warn.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
-                    wireview_core::say!("csv log: cannot write {}: {e}; retrying", log.path().display());
-                    last_csv_warn = Some(Instant::now());
-                }
+        if let Some(log) = csv_log.as_mut()
+            && let Err(e) = log.record(&data)
+        {
+            // One disk-full, removed folder or share violation must not
+            // end logging for the rest of the daemon's life: warn at most
+            // once a minute and retry on the next tick.
+            if last_csv_warn.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
+                wireview_core::say!("csv log: cannot write {}: {e}; retrying", log.path().display());
+                last_csv_warn = Some(Instant::now());
             }
         }
         let was_open = nexus.is_open();
@@ -248,23 +253,27 @@ fn main() -> ExitCode {
             continue;
         }
         backoff = 1.0;
-        if !was_open {
-            if let Some(pct) = args.brightness {
-                nexus.set_brightness(pct);
+        if !was_open && let Some(pct) = args.brightness {
+            let result = nexus.set_brightness(pct, watchdog.as_ref());
+            if let Err(e) = result {
+                wireview_core::say!("brightness failed, reconnecting: {e}");
+                nexus.close();
+                sleep(Duration::from_secs(2));
+                continue;
             }
         }
         // Bad data must not kill it either - and neither must a second panic
         // inside the fallback render, which would unwind out of main. If the
         // safe "Render error" page also panics, skip the frame instead.
-        let frame = match catch_unwind(AssertUnwindSafe(|| renderer.render(&data))) {
-            Ok(frame) => frame,
+        match catch_unwind(AssertUnwindSafe(|| frames.update(&mut renderer, &data))) {
+            Ok(_) => {}
             Err(p) => {
                 let why = panic_text(p);
                 wireview_core::say!("render failed: {why}");
                 match catch_unwind(AssertUnwindSafe(|| {
-                    renderer.render(&Readings::problem("none", "Render error", &why))
+                    frames.update(&mut renderer, &Readings::problem("none", "Render error", &why))
                 })) {
-                    Ok(frame) => frame,
+                    Ok(_) => {}
                     Err(_) => {
                         wireview_core::say!("fallback render failed too; skipping frame");
                         sleep(period.saturating_sub(t0.elapsed()));
@@ -275,7 +284,7 @@ fn main() -> ExitCode {
         };
         let sent = {
             let _watched = watched("Nexus write");
-            nexus.send_frame(frame.rgba())
+            nexus.send_frame(frames.canvas().rgba(), args.always_refresh)
         };
         if let Err(e) = sent {
             wireview_core::say!("write failed, reconnecting: {e}");

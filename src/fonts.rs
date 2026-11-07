@@ -5,6 +5,8 @@
 //! is embedded in the binary, so the daemon can always draw text - even on a
 //! machine with no usable font installed - instead of refusing to start.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use ab_glyph_rasterizer::{Point, Rasterizer, point};
@@ -102,9 +104,40 @@ fn load_first(names: &[&str]) -> Result<Vec<u8>, String> {
     ))
 }
 
+// Coverage is colour-independent. Cache the complete glyph relative to its
+// origin, then clip while blending; the rasterizer cannot clip negative x. Bound
+// both entries and bytes: arbitrary status text cannot grow this forever.
+type GlyphKey = (bool, u32, char, i32, i32, usize, usize);
+const CACHE_BYTES: usize = 256 * 1024;
+const CACHE_GLYPHS: usize = 256;
+#[derive(Default)]
+struct GlyphCache {
+    masks: BTreeMap<GlyphKey, Vec<f32>>,
+    bytes: usize,
+}
+
+impl GlyphCache {
+    fn mask(&mut self, key: GlyphKey, make: impl FnOnce() -> Vec<f32>) -> &[f32] {
+        if !self.masks.contains_key(&key) {
+            let mask = make();
+            let bytes = mask.len() * size_of::<f32>();
+            // Each individual mask is bounded to at most 640x48 pixels and
+            // therefore smaller than CACHE_BYTES.
+            if self.bytes + bytes > CACHE_BYTES || self.masks.len() >= CACHE_GLYPHS {
+                self.masks.clear();
+                self.bytes = 0;
+            }
+            self.bytes += bytes;
+            self.masks.insert(key, mask);
+        }
+        &self.masks[&key]
+    }
+}
+
 pub struct Fonts {
     regular: Vec<u8>,
     bold: Vec<u8>,
+    cache: RefCell<GlyphCache>,
 }
 
 impl Fonts {
@@ -124,7 +157,11 @@ impl Fonts {
             wireview_core::say!("fonts: {why}; bold text uses the regular face");
             regular.clone()
         });
-        Ok(Fonts { regular, bold })
+        Ok(Fonts {
+            regular,
+            bold,
+            cache: RefCell::default(),
+        })
     }
 
     /// The regular (or bold) face at `size` pixels per em.
@@ -132,6 +169,8 @@ impl Fonts {
         Face {
             font: if bold { &self.bold } else { &self.regular },
             size,
+            bold,
+            cache: &self.cache,
         }
     }
 }
@@ -140,6 +179,8 @@ impl Fonts {
 pub struct Face<'a> {
     font: &'a [u8],
     size: f32,
+    bold: bool,
+    cache: &'a RefCell<GlyphCache>,
 }
 
 impl Face<'_> {
@@ -175,25 +216,47 @@ impl Face<'_> {
             if let Some(outline) = outlines.get(glyph) {
                 let mut bounds = ControlBoundsPen::default();
                 let settings = DrawSettings::unhinted(size, location);
-                if outline.draw(settings, &mut bounds).is_ok() {
-                    if let Some(b) = bounds.bounding_box() {
-                        // Rasterise only the visible glyph area. Large or clipped
-                        // glyphs never allocate a buffer larger than the display.
-                        let left = (pen + b.x_min).floor().max(0.0) as i32;
-                        let right = (pen + b.x_max).ceil().min(W as f32) as i32;
-                        let top = (baseline - b.y_max).floor().max(0.0) as i32;
-                        let bottom = (baseline - b.y_min).ceil().min(H as f32) as i32;
-                        if right > left && bottom > top {
-                            let mut raster = Rasterizer::new((right - left) as usize, (bottom - top) as usize);
+                if outline.draw(settings, &mut bounds).is_ok()
+                    && let Some(b) = bounds.bounding_box()
+                {
+                    // Rasterise the full glyph with nonnegative coordinates,
+                    // then let Canvas clip the pixels. Clipping its outline
+                    // first can overflow ab_glyph_rasterizer's negative-x
+                    // indexing. Refuse oversized malformed font glyphs so
+                    // a mask still never exceeds the display's pixel count.
+                    let left = (pen + b.x_min).floor() as i32;
+                    let right = (pen + b.x_max).ceil() as i32;
+                    let top = (baseline - b.y_max).floor() as i32;
+                    let bottom = (baseline - b.y_min).ceil() as i32;
+                    let w = i64::from(right) - i64::from(left);
+                    let h = i64::from(bottom) - i64::from(top);
+                    if (1..=W as i64).contains(&w)
+                        && (1..=H as i64).contains(&h)
+                        && right > 0
+                        && bottom > 0
+                        && left < W as i32
+                        && top < H as i32
+                    {
+                        let (w, h) = (w as usize, h as usize);
+                        let key = (self.bold, self.size.to_bits(), c, left - pen as i32, top - baseline as i32, w, h);
+                        let mut cache = self.cache.borrow_mut();
+                        let mask = cache.mask(key, || {
+                            let mut raster = Rasterizer::new(w, h);
                             let mut raster_pen = RasterPen {
                                 raster: &mut raster,
                                 offset: point(pen - left as f32, baseline - top as f32),
                                 start: point(0.0, 0.0),
                                 last: point(0.0, 0.0),
                             };
+                            let mut mask = vec![0.0; w * h];
                             if outline.draw(DrawSettings::unhinted(size, location), &mut raster_pen).is_ok() {
-                                raster
-                                    .for_each_pixel_2d(|gx, gy, coverage| canvas.blend(left + gx as i32, top + gy as i32, color, coverage));
+                                raster.for_each_pixel_2d(|gx, gy, coverage| mask[gy as usize * w + gx as usize] = coverage);
+                            }
+                            mask
+                        });
+                        for (i, &coverage) in mask.iter().enumerate() {
+                            if coverage != 0.0 {
+                                canvas.blend(left + (i % w) as i32, top + (i / w) as i32, color, coverage);
                             }
                         }
                     }
@@ -268,11 +331,12 @@ mod tests {
         let fonts = Fonts {
             regular: EMBEDDED_REGULAR.to_vec(),
             bold: EMBEDDED_REGULAR.to_vec(),
+            cache: RefCell::default(),
         };
         let face = fonts.face(17.0, false);
         let mut canvas = Canvas::new([0, 0, 0]);
         face.draw(&mut canvas, 8, 4, "12.80 A · 35.8°C", [255, 255, 255], Anchor::Left);
-        assert!(canvas.rgba().chunks_exact(4).any(|p| p[0] > 0));
+        assert!(canvas.rgba().as_chunks::<4>().0.iter().any(|p| p[0] > 0));
         assert!(face.width("·") > 0 && face.width("°") > 0);
     }
 
@@ -287,10 +351,35 @@ mod tests {
             face.draw(&mut left, 8, 4, text, [255, 255, 255], Anchor::Left);
             face.draw(&mut right, 8 + face.width(text), 4, text, [255, 255, 255], Anchor::Right);
             assert_eq!(left.rgba(), right.rgba());
-            assert!(left.rgba().chunks_exact(4).any(|p| p[0] > 0));
+            assert!(left.rgba().as_chunks::<4>().0.iter().any(|p| p[0] > 0));
             let mut blank = Canvas::new([0, 0, 0]);
             face.draw(&mut blank, 8, 4, " ", [255, 255, 255], Anchor::Left);
-            assert!(blank.rgba().chunks_exact(4).all(|p| p[0] == 0));
+            assert!(blank.rgba().as_chunks::<4>().0.iter().all(|p| p[0] == 0));
+        }
+    }
+    #[test]
+    fn cached_glyphs_preserve_clipping_and_colour_and_stay_bounded() {
+        let fonts = Fonts::load().unwrap();
+        for size in [10.0, 12.0, 17.0, 30.0] {
+            for bold in [false, true] {
+                let face = fonts.face(size, bold);
+                for (x, y) in [(-15, -10), (10, 2), (600, 35)] {
+                    fonts.cache.borrow_mut().masks.clear();
+                    fonts.cache.borrow_mut().bytes = 0;
+                    let mut fresh = Canvas::new([3, 5, 7]);
+                    let mut cached = Canvas::new([3, 5, 7]);
+                    face.draw(&mut fresh, x, y, "12.8 A · °C", [220, 40, 10], Anchor::Left);
+                    face.draw(&mut cached, x, y, "12.8 A · °C", [220, 40, 10], Anchor::Left);
+                    assert_eq!(fresh.rgba(), cached.rgba());
+                }
+            }
+        }
+        let face = fonts.face(17.0, false);
+        let mut frame = Canvas::new([0; 3]);
+        for c in (32..2000).filter_map(char::from_u32) {
+            face.draw(&mut frame, 1, 1, &c.to_string(), [255; 3], Anchor::Left);
+            let cache = fonts.cache.borrow();
+            assert!(cache.bytes <= CACHE_BYTES && cache.masks.len() <= CACHE_GLYPHS);
         }
     }
 }
