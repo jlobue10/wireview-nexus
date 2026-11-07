@@ -100,7 +100,8 @@ says otherwise.
 <details>
 <summary>Build from source</summary>
 
-With [Rust](https://rustup.rs) installed. The shared reader is the `wireview-core` crate of the
+With [Rust](https://rustup.rs) 1.88 or newer installed (the locked `sha2` and the patched
+`ctutils` need it). The shared reader is the `wireview-core` crate of the
 companion repository, so clone both side by side:
 
 ```
@@ -165,9 +166,11 @@ fault masks. Reads take well under a millisecond.
 
 Started by the Scheduled Task the daemon has no console, so its messages go to
 `%LOCALAPPDATA%\wireview\wireview-nexus.log` (each start adds a dated line; past 1 MiB the file
-moves to `.old.log`). If the panel goes blank, that file says whether the daemon exited and why;
-the task starts an exited daemon again (within a minute after a failure exit, within five
-minutes otherwise), and the watchdog turns a stuck one into an exited one.
+moves to `.old.log` and the daemon continues in a fresh file, closing its handle on the old one
+so `.old.log` can be deleted while the daemon runs). If the panel goes blank, that file says
+whether the daemon exited and why; the task starts an exited daemon again (within a minute
+after a failure exit, within five minutes otherwise), and the watchdog turns a stuck one into
+an exited one.
 
 ### Brightness failure guard
 
@@ -231,6 +234,17 @@ warning colour at 80 % of a limit and to critical at 100 %, always with a text l
 in °C. Device fault flags (over-current, over-power, over-temperature, imbalance) are listed in
 red on the bottom row.
 
+## Resource usage
+
+Sensor polling and stale-reading checks run at `--fps`. Unchanged display data reuses the
+previous frame; changed data redraws into the same pixel buffer with a bounded 256 KiB
+glyph-mask cache, and USB packets are streamed from a single packet buffer. Identical frames
+are sent at least every two seconds (or on the next tick at lower frame rates), so a
+disconnect or a lost display is still noticed and repainted within that time. Reconnecting
+always sends a full frame. Use `--always-refresh` if your panel or another program needs the
+previous every-tick writes. Physical-panel coexistence and reconnect behaviour still need
+hardware validation.
+
 ## CSV log
 
 Off by default. `--csv-log <DIR>` (installer: `-Log`, `-LogDir`) writes a new
@@ -269,15 +283,3 @@ wireview-pro-ii and wireview-hwmon (MIT). The executable includes the Rust crate
 `Cargo.lock` under their own licenses (MIT, Apache-2.0, and MPL-2.0 for `serialport`) and a copy
 of the DejaVu Sans typeface (Bitstream Vera licence, [assets/FONT-LICENCE.txt](assets/FONT-LICENCE.txt),
 shipped with every release as `FONT-LICENCE.txt`).
-
-### Resource usage
-
-Sensor polling and stale-reading checks continue at `--fps`. Unchanged display data reuses
-the previous frame; changed data redraws into the same pixel buffer with a bounded 256 KiB
-glyph-mask cache. USB packets are streamed from a single packet buffer. Identical frames
-are sent at least every two seconds (or the next tick at lower frame rates), so disconnects
-and a lost display are still detected/repainted. Reconnecting always sends a full frame.
-Use `--always-refresh` if your panel or another program needs the previous every-tick
-write behaviour. Physical-panel coexistence and reconnect behaviour still need validation.
-
-Source builds require Rust 1.88 or newer, including the patched `ctutils` dependency.
