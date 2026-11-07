@@ -145,8 +145,8 @@ impl Nexus {
             .send(rgba, Instant::now(), always_refresh, |pkt| dev.write(pkt).map_err(NexusError::from))
     }
 
-    /// Panel backlight, 0 to 100. The caller must watch this driver call just
-    /// like frame writes; HID feature reports can block too.
+    /// Panel backlight, 0 to 100, watched while inside the HID driver.
+    /// The caller arms the persistent brightness guard before invoking this.
     pub fn set_brightness(&self, pct: u8, watchdog: Option<&Watchdog>) -> Result<(), NexusError> {
         let dev = self.dev.as_ref().ok_or_else(|| NexusError("device not open".into()))?;
         brightness_report(pct, watchdog, |report| dev.send_feature_report(report).map_err(NexusError::from))

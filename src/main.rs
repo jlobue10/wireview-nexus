@@ -10,6 +10,7 @@
 // Started at logon by a Scheduled Task: no console window.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod brightness;
 mod canvas;
 mod fonts;
 mod nexus;
@@ -26,6 +27,7 @@ use clap::Parser;
 use wireview_core::csvlog::{self, CsvLog};
 use wireview_core::{DEFAULT_BRIDGE_URL, Reader, Readings, Source, Watchdog, watchdog};
 
+use crate::brightness::{BrightnessGuard, Outcome};
 use crate::canvas::{Canvas, H, W};
 use crate::fonts::Fonts;
 use crate::nexus::Nexus;
@@ -95,9 +97,13 @@ struct Args {
     #[arg(long)]
     always_refresh: bool,
 
-    /// Panel backlight 0-100, set when the panel is opened
+    /// Panel backlight 0-100, applied on open unless a previous brightness attempt failed
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
     brightness: Option<u8>,
+
+    /// Clear a previous brightness failure guard and exit; stop the daemon first
+    #[arg(long, conflicts_with_all = ["brightness", "preview", "csv_log", "demo"])]
+    reset_brightness_guard: bool,
 
     /// bridge (a running wireview-xeneon-edge bridge), serial (direct USB), hwinfo, or auto (that order)
     #[arg(long, default_value = "auto", value_name = "auto|serial|hwinfo|bridge")]
@@ -156,6 +162,18 @@ fn panic_text(p: Box<dyn std::any::Any + Send>) -> String {
 fn main() -> ExitCode {
     wireview_core::console::attach();
     let args = Args::parse();
+    if args.reset_brightness_guard {
+        return match brightness::reset() {
+            Ok(()) => {
+                wireview_core::say!("Brightness guard reset. Restart the daemon to retry brightness.");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                wireview_core::say_err!("Cannot reset brightness guard: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
 
     let fonts = match Fonts::load() {
         Ok(f) => f,
@@ -196,6 +214,7 @@ fn main() -> ExitCode {
     };
 
     let mut nexus = Nexus::default();
+    let mut brightness_guard = BrightnessGuard::default();
     let mut frames = FrameCache::default();
     let period = Duration::from_secs_f64(1.0 / args.fps);
     let mut backoff = 1.0_f64;
@@ -253,14 +272,14 @@ fn main() -> ExitCode {
             continue;
         }
         backoff = 1.0;
-        if !was_open && let Some(pct) = args.brightness {
-            let result = nexus.set_brightness(pct, watchdog.as_ref());
-            if let Err(e) = result {
-                wireview_core::say!("brightness failed, reconnecting: {e}");
-                nexus.close();
-                sleep(Duration::from_secs(2));
-                continue;
-            }
+        if !was_open
+            && let Some(pct) = args.brightness
+            && let Outcome::Disabled(why) = brightness_guard.apply(pct, || nexus.set_brightness(pct, watchdog.as_ref()))
+        {
+            wireview_core::say!(
+                "Brightness control disabled: {why}. Continuing display updates at the panel's current brightness. \
+                     Stop the daemon and run --reset-brightness-guard before restarting to retry."
+            );
         }
         // Bad data must not kill it either - and neither must a second panic
         // inside the fallback render, which would unwind out of main. If the

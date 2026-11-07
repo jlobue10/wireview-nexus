@@ -153,7 +153,8 @@ fault masks. Reads take well under a millisecond.
 | `--cable-w` | cable's own rating | Cable rating in W (the WireView reports 600/450/300/150) |
 | `--fps` | `2` | Sensor/readout ticks per second, from 0.2 to 60 |
 | `--always-refresh` | off | Send every tick, including identical frames; otherwise unchanged screens refresh every 2 seconds |
-| `--brightness` | | Panel backlight 0–100, set each time the panel is opened |
+| `--brightness` | | Panel backlight 0–100, applied on open unless a previous brightness attempt failed |
+| `--reset-brightness-guard` | off | Clear the brightness failure guard and exit; stop the daemon first |
 | `--source` | `auto` | `auto`, `bridge`, `serial`, `hwinfo` |
 | `--serial-port` | auto-detect | COM port of the WireView |
 | `--bridge-url` | `http://localhost:8765/api/wireview` | Bridge to ask in `auto`/`bridge` mode |
@@ -167,6 +168,27 @@ Started by the Scheduled Task the daemon has no console, so its messages go to
 moves to `.old.log`). If the panel goes blank, that file says whether the daemon exited and why;
 the task starts an exited daemon again (within a minute after a failure exit, within five
 minutes otherwise), and the watchdog turns a stuck one into an exited one.
+
+### Brightness failure guard
+
+Brightness is optional: a rejected or incomplete brightness report logs one warning and
+leaves frame updates running at the panel's current brightness. It does not close the
+panel, delay rendering, or retry brightness on subsequent reconnects.
+
+Before calling the driver, the daemon creates
+`%LOCALAPPDATA%\wireview\wireview-nexus-brightness.guard` and removes it only after success.
+If the call hangs, the watchdog exits as before, but the restarted daemon sees the guard
+and skips brightness instead of repeating the hang. An ordinary error also keeps the
+guard across restarts. If the guard cannot be created, brightness is skipped safely.
+On non-Windows systems the guard lives under `$XDG_STATE_HOME/wireview` or
+`$HOME/.local/state/wireview`.
+
+To deliberately retry after resolving the problem, disable and stop the scheduled task,
+run `wireview-nexus.exe --reset-brightness-guard`, then re-enable/start the task. The reset
+command exits without opening either device; do not add it to the task's persistent
+arguments. Changing the brightness value alone does not bypass the guard. With
+`--watchdog 0`, the automatic exit for a hung driver call is disabled; the persisted guard
+still protects the next run after you stop the stuck process.
 
 ### Themes
 

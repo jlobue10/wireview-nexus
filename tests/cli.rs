@@ -110,6 +110,37 @@ fn d2_version() {
     assert_eq!((code, out.trim()), (Some(0), concat!("wireview-nexus ", env!("CARGO_PKG_VERSION"))));
 }
 
+#[test]
+fn brightness_guard_reset_exits_without_starting_the_daemon() {
+    let dir = std::env::temp_dir().join(format!("wireview-brightness-reset-{}", std::process::id()));
+    let state = dir.join("wireview");
+    std::fs::create_dir_all(&state).unwrap();
+    let marker = state.join("wireview-nexus-brightness.guard");
+    let unrelated = state.join("keep.txt");
+    std::fs::write(&marker, "interrupted brightness attempt").unwrap();
+    std::fs::write(&unrelated, "keep").unwrap();
+    for _ in 0..2 {
+        let out = Command::new(BIN)
+            .arg("--reset-brightness-guard")
+            .env("LOCALAPPDATA", &dir)
+            .env("XDG_STATE_HOME", &dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("Brightness guard reset"));
+        assert!(!marker.exists());
+        assert_eq!(std::fs::read_to_string(&unrelated).unwrap(), "keep");
+    }
+    let out = Command::new(BIN)
+        .args(["--reset-brightness-guard", "--brightness", "50"])
+        .env("LOCALAPPDATA", &dir)
+        .env("XDG_STATE_HOME", &dir)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "reset must be a separate operation");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 fn png_size(path: &std::path::Path) -> (u32, u32) {
     let b = std::fs::read(path).unwrap();
     assert_eq!(&b[..8], b"\x89PNG\r\n\x1a\n");
