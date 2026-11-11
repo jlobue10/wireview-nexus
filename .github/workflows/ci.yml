@@ -51,3 +51,6 @@ jobs:
       - name: Installer regressions
         shell: pwsh
         run: ./tests/installer.test.ps1
+      - name: Linux installer regressions
+        if: runner.os == 'Linux'
+        run: sh tests/installer.test.sh

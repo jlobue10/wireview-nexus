@@ -109,8 +109,8 @@ struct Args {
     #[arg(long, default_value = "auto", value_name = "auto|serial|hwinfo|bridge")]
     source: Source,
 
-    /// WireView COM port (default: auto-detect)
-    #[arg(long, value_name = "COMx")]
+    /// WireView serial port, e.g. COM5 or /dev/ttyACM0 (default: auto-detect)
+    #[arg(long, value_name = "PORT")]
     serial_port: Option<String>,
 
     /// Bridge JSON URL
@@ -134,7 +134,7 @@ struct Args {
     #[arg(long, value_name = "SECONDS", default_value = "60", value_parser = csvlog::parse_interval, requires = "csv_log")]
     csv_interval: Duration,
 
-    /// Exit (status 3, for the scheduled task to restart) when a device read
+    /// Exit (status 3, for the scheduled task or systemd to restart) when a device read
     /// or a panel write has not returned after this many seconds; 0 turns
     /// the watchdog off
     #[arg(long, value_name = "SECONDS", default_value = "20", value_parser = watchdog::parse_limit)]
@@ -266,7 +266,7 @@ fn main() -> ExitCode {
             nexus.open()
         };
         if !opened {
-            wireview_core::say!("Nexus not found, retrying...");
+            wireview_core::say!("{}, retrying...", nexus.problem());
             sleep(Duration::from_secs_f64(backoff.min(10.0)));
             backoff *= 2.0;
             continue;
