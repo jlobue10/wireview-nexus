@@ -23,7 +23,7 @@ options are unchanged.)
 
 ## Install
 
-One command, in PowerShell:
+(Windows; for Linux see [Linux](#linux).) One command, in PowerShell:
 
 ```
 powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.ps1 | iex"
@@ -79,7 +79,7 @@ The one-liner above runs whatever `install.ps1` is on `main` today. To install e
 reviewed, fetch the bootstrap from the same tag and pass the hash from that release's notes:
 
 ```
-powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/v2.7.0/install.ps1))) -Ref v2.7.0 -Sha256 <hash>"
+powershell -ExecutionPolicy Bypass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/jlobue10/wireview-nexus/v2.8.0/install.ps1))) -Ref v2.8.0 -Sha256 <hash>"
 ```
 
 Fully verified, with no remote code before the check: download `wireview-nexus.exe` and
@@ -116,6 +116,68 @@ target\release\wireview-nexus.exe --layout combined
 Copy `install.ps1` next to the executable and run it to register the task in place.
 </details>
 
+## Linux
+
+The daemon drives the Nexus the same way on Linux; there is no iCUE to set up or to fight with.
+
+### Install
+
+In a terminal, as your normal user (not root):
+
+```
+curl -fsSL https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.sh | sh
+```
+
+With options, e.g. another layout and theme:
+
+```
+curl -fsSL https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.sh | sh -s -- --layout per-wire --theme dracula
+```
+
+The installer (x86-64; Linux binaries start with release 2.8.0):
+
+- downloads `wireview-nexus-linux-x86_64` from the latest release to
+  `~/.local/share/wireview-nexus` and checks its SHA-256. The binary is static (musl): no
+  libraries, any distribution.
+- installs one udev rule file, `/etc/udev/rules.d/70-wireview-nexus.rules`, the only step that
+  asks for `sudo`. The Nexus (`/dev/hidraw*`, USB 1b1c:1b8e) and the WireView's serial port
+  (`/dev/ttyACM*`, USB 0483:5740) otherwise belong to root; the rules give them to whoever is
+  logged in at the machine (`uaccess`, no group change, no re-login) and tell ModemManager not to
+  probe the WireView. 0483:5740 is STMicroelectronics' generic virtual COM port ID, so other
+  STM32 gadgets match as well. `--no-udev` skips the step.
+- registers and starts a systemd user service, `wireview-nexus.service`, which starts with your
+  login session and restarts the daemon whenever it exits.
+
+The panel should show readings within a couple of seconds. If it stays dark, look at
+`journalctl --user -u wireview-nexus`: "Nexus found but it cannot be opened" means the udev rule
+is missing.
+
+Running the installer again updates the daemon and changes its options
+(`~/.local/share/wireview-nexus/install.sh --layout combined --theme nord`). Other options:
+`--ref <tag> --sha256 <hash>` (one reviewed build, both in the release notes), `--no-start`,
+`--log` / `--log-dir <folder>` ([CSV log](#csv-log)), `--extra-args '--fps 4 --brightness 60'`,
+`--dir <folder>`. Manage the service with `systemctl --user status|stop|restart wireview-nexus`.
+With a `wireview-nexus` binary next to `install.sh` (a source build: `cargo build --release`, then
+copy `install.sh` into `target/release/`) that binary is installed and nothing is downloaded.
+
+With the [wireview-xeneon-edge](https://github.com/jlobue10/wireview-xeneon-edge) bridge
+installed as well, the daemon reads from the bridge and the two never compete for the serial
+port; the bridge secret is in `~/.config/wireview/bridge.secret`. `--source hwinfo` is
+Windows-only. The brightness guard file is under `~/.local/state` (the daemon's log names it).
+
+### Uninstall
+
+```
+~/.local/share/wireview-nexus/install.sh --uninstall
+sudo rm /etc/udev/rules.d/70-wireview-nexus.rules
+```
+
+The first command stops and removes the service, the binary and the installer itself, and
+leaves any file you added to the folder (CSV logs, say). The second removes the udev rules, the
+one thing installed outside your home directory.
+
+Tested on CachyOS with a WireView Pro II on firmware v5 and an iCUE Nexus.
+
 ## Where the readings come from
 
 ```
@@ -127,7 +189,7 @@ WireView Pro II ──USB serial (COMx, 115200 8N1)──▶ wireview-nexus.exe 
 | Source | What it does |
 |---|---|
 | `bridge` | Asks a running [wireview-xeneon-edge](https://github.com/jlobue10/wireview-xeneon-edge) bridge at `http://localhost:8765/api/wireview`. Use this when both projects run on one PC: the bridge owns the device and the Nexus daemon shares its readings. The bridge must prove itself: the daemon sends a nonce and checks the HMAC in the reply against the per-user secret in `%LOCALAPPDATA%\wireview\bridge.secret`; anything else listening on the port is ignored. The reply is type-checked, read against a one-second deadline, and never goes through an `HTTP_PROXY`. |
-| `serial` | Opens the WireView's COM port directly. Auto-detects the port by USB ID 0483:5740; `--serial-port COM5` overrides. |
+| `serial` | Opens the WireView's COM port directly. Auto-detects the port by USB ID 0483:5740; `--serial-port COM5` (Linux: `/dev/ttyACM0`) overrides. |
 | `hwinfo` | Reads HWiNFO64 shared memory (HWiNFO 8.41+ with Shared Memory Support on). Kept as a fallback for setups where HWiNFO must keep the device. |
 
 In `auto` mode the daemon retries a busy or unplugged port every two seconds, and lets go of
@@ -272,6 +334,8 @@ readings as JSON on localhost. Its `wireview-core` crate is the reader both prog
 installed font needed (a fallback face is embedded). After `cargo test`,
 `pwsh -NoProfile -File tests/installer.test.ps1` checks installation and uninstallation in
 temporary directories with Windows administration and downloads mocked.
+`sh tests/installer.test.sh` does the same for the Linux installer with `curl`, `systemctl`,
+`sudo` and `udevadm` stubbed.
 
 Audit findings, the Windows HID backend change and the remaining hardware checks are recorded
 in [AUDIT-2026-09-30.md](AUDIT-2026-09-30.md).

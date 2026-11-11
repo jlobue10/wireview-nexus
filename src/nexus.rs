@@ -95,11 +95,17 @@ pub struct Nexus {
     api: Option<HidApi>,
     dev: Option<HidDevice>,
     transfer: FrameTransfer,
+    problem: Option<String>,
 }
 
 impl Nexus {
     pub fn is_open(&self) -> bool {
         self.dev.is_some()
+    }
+
+    /// Why the last [`open`](Self::open) failed, for the log.
+    pub fn problem(&self) -> &str {
+        self.problem.as_deref().unwrap_or("Nexus not found")
     }
 
     /// Open the panel if it is not open yet. `false` when it cannot be found
@@ -108,6 +114,7 @@ impl Nexus {
         if self.dev.is_some() {
             return true;
         }
+        self.problem = None;
         let api = match &mut self.api {
             Some(api) => {
                 if api.refresh_devices().is_err() {
@@ -126,7 +133,20 @@ impl Nexus {
         else {
             return false;
         };
-        let Ok(dev) = api.open_path(info.path()) else { return false };
+        let dev = match api.open_path(info.path()) {
+            Ok(dev) => dev,
+            Err(e) => {
+                // Present but not ours to open: on Linux the hidraw node
+                // belongs to root until a udev rule hands it over.
+                let hint = if cfg!(windows) {
+                    ""
+                } else {
+                    " (install the udev rule from install.sh)"
+                };
+                self.problem = Some(format!("Nexus found but it cannot be opened: {e}{hint}"));
+                return false;
+            }
+        };
         let _ = dev.set_blocking_mode(false);
         // Priming read, the panel ignores writes until one has happened.
         let _ = dev.read_timeout(&mut [0u8; 512], 100);

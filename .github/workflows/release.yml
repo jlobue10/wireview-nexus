@@ -1,5 +1,6 @@
-# Builds wireview-nexus.exe for a version tag and opens a DRAFT release with
-# the executable, install.ps1, SHA256SUMS and a build provenance attestation.
+# Builds wireview-nexus.exe and the static Linux binary for a version tag and
+# opens a DRAFT release with both, install.ps1, install.sh, SHA256SUMS and a
+# build provenance attestation.
 # Review the draft, then publish it; the installer only sees published releases.
 name: Release
 
@@ -17,13 +18,50 @@ defaults:
     working-directory: wireview-nexus
 
 jobs:
+  linux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: wireview-nexus
+      - name: Companion repository at the same tag
+        working-directory: .
+        run: git clone --depth 1 --branch "$GITHUB_REF_NAME" https://github.com/jlobue10/wireview-xeneon-edge
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --target x86_64-unknown-linux-musl && rustup default stable
+      - run: cargo test --locked
+      # musl: one static file that runs on any distribution, like the .exe.
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Binary smoke
+        run: |
+          cp target/x86_64-unknown-linux-musl/release/wireview-nexus wireview-nexus-linux-x86_64
+          out=$(./wireview-nexus-linux-x86_64 --version)
+          [ "$out" = "wireview-nexus ${GITHUB_REF_NAME#v}" ] || { echo "version output does not match tag: $out"; exit 1; }
+          file wireview-nexus-linux-x86_64 | grep -q static || { echo "binary is not static"; exit 1; }
+          ./wireview-nexus-linux-x86_64 --preview smoke.png --demo
+      - name: Installer regressions
+        run: sh tests/installer.test.sh "$PWD/wireview-nexus-linux-x86_64"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux
+          path: wireview-nexus/wireview-nexus-linux-x86_64
+          if-no-files-found: error
+
   build:
+    needs: linux
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           path: wireview-nexus
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux
+          path: wireview-nexus/linux
       # wireview-core comes from the companion repository at the SAME tag, so a
       # release is always built from two tagged trees. Tag that repository first.
       - name: Companion repository at the same tag
@@ -53,9 +91,10 @@ jobs:
         run: |
           New-Item -ItemType Directory dist | Out-Null
           # The executable embeds DejaVu Sans; its licence travels with every copy.
-          Copy-Item target/release/wireview-nexus.exe, install.ps1, assets/FONT-LICENCE.txt dist/
+          Copy-Item target/release/wireview-nexus.exe, install.ps1, install.sh, linux/wireview-nexus-linux-x86_64, assets/FONT-LICENCE.txt dist/
           $hash = (Get-FileHash dist/wireview-nexus.exe -Algorithm SHA256).Hash.ToLower()
-          [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS", "$hash  wireview-nexus.exe`n")
+          $linuxHash = (Get-FileHash dist/wireview-nexus-linux-x86_64 -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS", "$hash  wireview-nexus.exe`n$linuxHash  wireview-nexus-linux-x86_64`n")
           $tick = [char]96
           $raw = "https://raw.githubusercontent.com/$env:GITHUB_REPOSITORY/$env:GITHUB_REF_NAME/install.ps1"
           $notes = @(
@@ -65,15 +104,23 @@ jobs:
               ''
               "    powershell -ExecutionPolicy Bypass -c `"& ([scriptblock]::Create((irm $raw))) -Ref $env:GITHUB_REF_NAME -Sha256 $hash`""
               ''
-              "Provenance: $($tick)gh attestation verify wireview-nexus.exe --repo $env:GITHUB_REPOSITORY$tick"
+              "wireview-nexus-linux-x86_64 SHA-256: $tick$linuxHash$tick"
+              ''
+              'Install exactly this build on Linux:'
+              ''
+              "    curl -fsSL $($raw -replace 'install\.ps1$', 'install.sh') | sh -s -- --ref $env:GITHUB_REF_NAME --sha256 $linuxHash"
+              ''
+              "Provenance: $($tick)gh attestation verify <file> --repo $env:GITHUB_REPOSITORY$tick"
               ''
           ) -join "`n"
           [IO.File]::WriteAllText("$PWD/notes.md", $notes)
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: wireview-nexus/dist/wireview-nexus.exe
+          subject-path: |
+            wireview-nexus/dist/wireview-nexus.exe
+            wireview-nexus/dist/wireview-nexus-linux-x86_64
       - name: Draft release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft --title $env:GITHUB_REF_NAME --notes-file notes.md --generate-notes dist/wireview-nexus.exe dist/install.ps1 dist/SHA256SUMS dist/FONT-LICENCE.txt
+        run: gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft --title $env:GITHUB_REF_NAME --notes-file notes.md --generate-notes dist/wireview-nexus.exe dist/wireview-nexus-linux-x86_64 dist/install.ps1 dist/install.sh dist/SHA256SUMS dist/FONT-LICENCE.txt
