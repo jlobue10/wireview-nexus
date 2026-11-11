@@ -70,6 +70,9 @@
     <li>Give the Nexus an empty screen in iCUE so iCUE stops redrawing over the daemon's frames.</li>
   </ol>
 
+  <h2>Linux</h2>
+  <p>The daemon drives the Nexus the same way on Linux, with no iCUE to set up. Install it with <code>curl -fsSL https://raw.githubusercontent.com/jlobue10/wireview-nexus/main/install.sh | sh -s -- --layout combined --theme dracula</code>: it downloads the static <code>wireview-nexus-linux-x86_64</code> binary from the latest release, checks its SHA-256, installs a udev rule so your user can open the Nexus and the WireView (the one step that asks for <code>sudo</code>), and runs the daemon as a systemd user service that starts at login. Remove it with <code>~/.local/share/wireview-nexus/install.sh --uninstall</code> and <code>sudo rm /etc/udev/rules.d/70-wireview-nexus.rules</code>. Details are in the <a href="https://github.com/jlobue10/wireview-nexus#linux">README</a>.</p>
+
   <h2>Options</h2>
   <table>
     <tr><th>Option</th><th>Default</th><th>Meaning</th></tr>
